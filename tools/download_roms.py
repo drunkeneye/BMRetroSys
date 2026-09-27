@@ -5,15 +5,22 @@ VICE ROMs come from https://www.zimmers.net/anonftp/pub/cbm/firmware/
 (crawled + name-normalized, so layout changes don't break the mapping),
 except the SuperCPU scpu64 binary, which is intentionally never fetched.
 Atari ROMs come from https://github.com/ascrnet/FW-Altirra (Automatic/).
+Amiga Kickstarts come from the Amiga Demobase archive on archive.org
+(canonical BMX names); genuine TOS images from the TOSEC collection on
+archive.org (unzipped, canonical pool names). The archive.org sources are
+copyrighted ROMs redistributed there; fetching is opt-out via
+--no-download-roms (default: on, like the rest).
 
 Layout (repo-relative):
   roms/<machine-lower>/...   persistent cache (c64, c128, vic20, plus4,
-                             pet, drives, scpu64, a800)
+                             pet, drives, scpu64, a800, amiga, tos)
   third_party/vice-3.10/data/<MACHINE>/...
                              build/stage input (populated by copying new
                              VICE downloads out of the cache)
-  roms/a800/...              staged 1:1 to SD /roms (atari800 matches by
-                             CRC32/size, so upstream names are kept)
+  roms/a800/...              staged 1:1 to SD /roms/atari800 (atari800
+                             matches by CRC32/size, so upstream names kept)
+  roms/amiga/kick*.A*        staged 1:1 to SD /roms/kick
+  roms/tos/tos*.img          staged 1:1 to SD /roms/tos
 
 Files already present (size > 0) are never re-downloaded. New downloads
 are length-checked when the server reports one. Failures warn loudly but
@@ -38,6 +45,43 @@ FW_API = ("https://api.github.com/repos/ascrnet/FW-Altirra/"
           "contents/Automatic")
 FW_RAW = ("https://raw.githubusercontent.com/ascrnet/FW-Altirra/"
           "main/Automatic/")
+
+# Amiga Kickstarts from the Amiga Demobase archive on archive.org
+# (copyrighted Commodore ROMs, same opt-in stance as the pools above:
+# fetched by default, skipped with --no-download-roms).
+# (canonical BMX name, in-zip path, expected size). Verified 2026-09-27:
+# sizes match the kernel's Kickstart check and headers show genuine
+# 68000 reset vectors. KS 3.1 A600 (kick40063.A600) is NOT in that
+# archive under a stable name -- stays user-supplied (AROS covers boot).
+AMIGA_BASE = ("https://archive.org/download/Amiga_Demobase_Version_3/"
+              "Amiga_Demobase_Version_3.zip/")
+AMIGA_KICKS = [
+    ("kick34005.A500", "Kickstarts Winuae/KS ROM v1.3 "
+     "(A500,A1000,A2000) rev 34.5 (256k).rom", 262144),
+    ("kick37175.A500", "Kickstarts Winuae/KS ROM v2.04 "
+     "(A500+) rev 37.175 (512k).rom", 524288),
+    ("kick40068.A1200", "Kickstarts Winuae/KS ROM v3.1 "
+     "(A1200) rev 40.68 (512k).rom", 524288),
+]
+
+# Genuine TOS images from the TOSEC collection on archive.org (copyrighted
+# Atari ROMs, same opt-in stance as above). Each entry is a one-file .zip;
+# the inner .img is renamed to the canonical pool name. Verified
+# 2026-09-27: zips contain a single 256KB .img. (canonical pool name,
+# in-zip base path, zip filename).
+TOS_BASE = ("https://archive.org/download/Atari_ST_TOSEC_2012_04_23/"
+            "Atari_ST_TOSEC_2012_04_23.zip/"
+            "Atari ST [TOSEC]/TOS/Atari ST - TOS - [IMG] "
+            "(TOSEC-v2009-09-01_CM)/")
+TOS_IMAGES = [
+    ("tos106uk.img",
+     "TOS v1.06 (1989)(Atari Corp)(STE)(GB)[STE TOS, Rev 1].zip"),
+    ("tos162uk.img",
+     "TOS v1.62 (1990)(Atari Corp)(STE)(GB)[STE TOS, Rev 2].zip"),
+    ("tos206uk.img",
+     "TOS v2.06 (1991)(Atari Corp)(Mega-STE)(GB).zip"),
+]
+TOS_IMG_SIZE = 262144
 
 # (cache dir, vice-data dir or None, filename as staging needs it).
 # Mirrors the features=["roms"] entries in sd-layout.toml.
@@ -84,7 +128,7 @@ VICE_ROMS = [
     # absent: not downloadable from zimmers, stays in MISSING-ROMS.txt.
 ]
 
-UA = {"User-Agent": "BMX-rom-fetch/1.0 (staging helper)"}
+UA = {"User-Agent": "BMRetroSys-rom-fetch/1.0 (staging helper)"}
 
 # Expected uncompressed sizes, taken from the known-good local set. Every
 # download (single, alias or assembled) must match, otherwise it is dropped.
@@ -192,7 +236,8 @@ def dns_preflight():
     socket.setdefaulttimeout(10)
     try:
         ok = True
-        for host in ("www.zimmers.net", "api.github.com"):
+        for host in ("www.zimmers.net", "api.github.com",
+                     "archive.org"):
             try:
                 socket.getaddrinfo(host, 443)
                 print("  dns ok: %s" % host)
@@ -488,17 +533,90 @@ def fetch_atari(files):
     return got, skipped, failed
 
 
+def fetch_amiga():
+    """Kickstarts from archive.org into roms/amiga/ (canonical names)."""
+    dest_dir = os.path.join(CACHE, "amiga")
+    os.makedirs(dest_dir, exist_ok=True)
+    got, skipped, failed = 0, 0, []
+    for name, inner, size in AMIGA_KICKS:
+        dest = os.path.join(dest_dir, name)
+        if present(dest):
+            skipped += 1
+            continue
+        # fetch_bytes() normalizes encoding (spaces/parens) itself.
+        url = AMIGA_BASE + inner
+        print("  get %s" % name)
+        data = fetch_bytes(url)
+        if data is None or len(data) != size:
+            print("  SIZE-MISMATCH %s" % name)
+            failed.append(name)
+            continue
+        if write_file(dest, data):
+            got += 1
+        else:
+            failed.append(name)
+    return got, skipped, failed
+
+
+def fetch_tos():
+    """Genuine TOS images from archive.org into roms/tos/.
+
+    Each source is a one-file .zip; the inner .img is extracted with
+    zipfile (stdlib) and stored under the canonical pool name. The pool
+    doubles as the future TOS-selector source (atarist ROM menu)."""
+    import zipfile
+    import io
+    dest_dir = os.path.join(CACHE, "tos")
+    os.makedirs(dest_dir, exist_ok=True)
+    got, skipped, failed = 0, 0, []
+    for name, zip_name in TOS_IMAGES:
+        dest = os.path.join(dest_dir, name)
+        if present(dest):
+            skipped += 1
+            continue
+        url = TOS_BASE + zip_name
+        print("  get %s" % name)
+        data = fetch_bytes(url)
+        if data is None:
+            failed.append(name)
+            continue
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(data))
+            imgs = [i for i in zf.infolist()
+                    if i.filename.lower().endswith(".img") and
+                    i.file_size == TOS_IMG_SIZE and not i.is_dir()]
+            if len(imgs) != 1:
+                print("  TOS zip layout unexpected %s (%d imgs)" %
+                      (name, len(imgs)))
+                failed.append(name)
+                continue
+            blob = zf.read(imgs[0].filename)
+        except Exception as e:
+            print("  unzip failed %s (%s)" % (name, e))
+            failed.append(name)
+            continue
+        if write_file(dest, blob):
+            got += 1
+        else:
+            failed.append(name)
+    return got, skipped, failed
+
+
 def main():
     only = set(a[7:] for a in sys.argv[1:] if a.startswith("--only="))
     do_vice = not only or "vice" in only or "c64" in only
     do_atari = not only or "atari" in only or "a800" in only
+    do_amiga = not only or "amiga" in only or "kick" in only
+    do_tos = not only or "tos" in only or "atarist" in only or "st" in only
 
-    # Staging copies repo/roms/a800 1:1 (both.tree requires the source to
+    # Staging copies repo pools 1:1 (both.tree requires the source to
     # exist, even when empty), so the cache dirs always exist afterwards
     # — even fully offline, when there is nothing to put in them yet.
     for cache_dir, _, _ in VICE_ROMS:
         os.makedirs(os.path.join(CACHE, cache_dir), exist_ok=True)
     os.makedirs(os.path.join(CACHE, "a800"), exist_ok=True)
+    os.makedirs(os.path.join(CACHE, "amiga"), exist_ok=True)
+    os.makedirs(os.path.join(CACHE, "tos"), exist_ok=True)
 
     total_failed = []
     net_ok = dns_preflight()
@@ -531,6 +649,24 @@ def main():
             print("  atari: %d fetched, %d present, %d failed" %
                   (got, skipped, len(failed)))
             total_failed += ["a800:" + n for n in failed]
+    if do_amiga:
+        print("Amiga Kickstarts (archive.org Amiga Demobase):")
+        if not net_ok:
+            print("  amiga: offline, skipping")
+        else:
+            got, skipped, failed = fetch_amiga()
+            print("  amiga: %d fetched, %d present, %d failed" %
+                  (got, skipped, len(failed)))
+            total_failed += ["amiga:" + n for n in failed]
+    if do_tos:
+        print("Atari TOS images (archive.org TOSEC):")
+        if not net_ok:
+            print("  tos: offline, skipping")
+        else:
+            got, skipped, failed = fetch_tos()
+            print("  tos: %d fetched, %d present, %d failed" %
+                  (got, skipped, len(failed)))
+            total_failed += ["tos:" + n for n in failed]
     if total_failed:
         print("STILL MISSING (%d):" % len(total_failed))
         for n in total_failed:

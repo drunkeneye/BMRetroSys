@@ -84,7 +84,8 @@ bool InitialPurposeAllowed(UpdateUrlPurpose purpose) {
            purpose == UpdateUrlPurpose::ReleaseAsset ||
            purpose == UpdateUrlPurpose::PreparedDraftDiscovery ||
            purpose == UpdateUrlPurpose::AuthenticatedReleaseAsset ||
-           purpose == UpdateUrlPurpose::GitHubDeviceAuthorization;
+           purpose == UpdateUrlPurpose::GitHubDeviceAuthorization ||
+           purpose == UpdateUrlPurpose::Atarimania;
 }
 
 void SetString(char *output, size_t output_size, const char *value) {

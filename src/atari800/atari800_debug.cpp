@@ -38,17 +38,17 @@ void sync_log(void) {
 
 void debug_init(void) {
   static const char *candidates[] = {
-      "SYS:/bmx-atari800.log",
-      "SD:/bmx-atari800.log",
-      "USER:/bmx-atari800.log",
-      "/bmx-atari800.log",
+      "SYS:/bmretrosys-atari800.log",
+      "SD:/bmretrosys-atari800.log",
+      "USER:/bmretrosys-atari800.log",
+      "/bmretrosys-atari800.log",
   };
   for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
     FILE *fp = fopen(candidates[i], "w");
     if (fp != NULL) {
       s_log = fp;
       printf("Atari800: debug log -> %s\n", candidates[i]);
-      fprintf(s_log, "BMX8bit atari800 debug log\n");
+      fprintf(s_log, "BMRetroSys atari800 debug log\n");
       fprintf(s_log, "BUILD TAG: " __DATE__ " " __TIME__ "\n");
       fflush(s_log);
       fsync(fileno(s_log));
@@ -96,3 +96,10 @@ void debug_close(void) {
 
 }  // namespace atari800
 }  // namespace bmx
+
+// Host trace sink for the shared Atarimania client
+// (src/update/atarimania_client.cpp references this weakly; other kernels
+// leave it null). Pre-formatted with a power-on timestamp.
+extern "C" void netcheck_host_trace(const char *line) {
+  bmx::atari800::debug_log("networktest: %s", line != NULL ? line : "?");
+}

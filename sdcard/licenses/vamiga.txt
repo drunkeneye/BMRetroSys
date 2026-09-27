@@ -1,0 +1,14 @@
+vAmiga - Commodore Amiga emulator
+Copyright (C) Dirk W. Hoffmann (www.dirkwhoffmann.de).
+
+Licensed under the Mozilla Public License v2.0
+(see https://mozilla.org/MPL/2.0 for license information).
+
+The vAmiga Core used by reference (../vamiga, v5.0b2) carries its full
+license text in its own LICENSE file. The BMX Amiga kernel builds the
+A500 OCS subset (no GUI, no emulator thread, DF0-ADF only). Details of
+the subset and the bare-metal adaptations are documented in
+THIRD_PARTY_SOURCES.md (staged as /licenses/third_party_sources.txt).
+DiagROM 1.3 fallback (compiled in when no Kickstart is on SD) is MIT
+licensed by John Hertell (see https://www.diagrom.com).
+Source: https://github.com/dirkwhoffmann/vAmiga

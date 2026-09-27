@@ -1,0 +1,17 @@
+# AMIGA ROM notes (all models: A1000/A500/A500+/A1200).
+#
+# Kickstart pool (proprietary, NEVER in git): place Kickstart images in
+# roms/amiga/ in this repo (or /roms/kick/ on the SD card; legacy /kick/
+# still works); they are staged 1:1 to /roms/kick/ at image time. The
+# kernel tries /roms/kick first, then /kick, in order:
+#   kick34005.A500          - Kickstart 1.3 A500 (recommended for games)
+#   kick37175.A500          - Kickstart 2.04 A500
+#   kick40063.A600          - Kickstart 3.1 (works on the A500 config)
+#   kick40068.A1200         - Kickstart 3.1 A1200 (for the A1200 model)
+#   aros-amiga-m68k-rom.bin - AROS replacement ROM
+# Zero-config fallback: with no Kickstart on SD the kernel boots the
+# compiled-in DiagROM 1.3 (MIT, John Hertell) for hardware self-test.
+#
+# Floppies live on the SD card under /systems/AMIGA/disks (.ADF, DF0-DF3).
+# /systems/AMIGA/disks/boot.adf boots automatically when present.
+# Hardfiles (.HDF, HD0/HD1) attach from the Drives menu; DH0 boots first.

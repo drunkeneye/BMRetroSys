@@ -146,7 +146,7 @@ static unsigned update_progress_per_mille;
 static int update_progress_determinate;
 static int update_progress_cancel_enabled;
 static volatile int update_progress_cancel_requested;
-static const char *update_progress_title = "BMX8bit Update";
+static const char *update_progress_title = "BMRetroSys Update";
 
 // Operation-specific overlay title ("Extracting..." for archive work).
 // NULL or empty restores the default. Call while the session is active;
@@ -155,7 +155,7 @@ void ui_update_progress_set_title(const char *title) {
   if (title != NULL && title[0] != '\0') {
     update_progress_title = title;
   } else {
-    update_progress_title = "BMX8bit Update";
+    update_progress_title = "BMRetroSys Update";
   }
 }
 
@@ -996,7 +996,7 @@ static void ui_render_update_progress(void) {
     ui_draw_text("RETURN/ESC: Cancel", left + 2 * 8,
                  top + 6 * 8, FG_COLOR);
   } else {
-    ui_draw_text("Do not turn off BMX8bit", left + 2 * 8,
+    ui_draw_text("Do not turn off BMRetroSys", left + 2 * 8,
                  top + 6 * 8, FG_COLOR);
   }
 }
@@ -1260,6 +1260,18 @@ static void ui_action(long action) {
     }
     break;
   case ACTION_Return:
+    {
+      // Temporary diagnostic: trace Return delivery (which row type,
+      // whether the text-field callback is registered).
+      extern void netcheck_host_trace(const char *line);
+      char tline[96];
+      snprintf(tline, sizeof(tline), "ui return cur=%d cb=%d",
+               cur != NULL ? cur->type : -1,
+               on_text_field_return != NULL ? 1 : 0);
+      if (netcheck_host_trace != 0) {
+        netcheck_host_trace(tline);
+      }
+    }
     if (cur->disabled) break;
     if (cur->type == FOLDER) {
       cur->is_expanded = 1 - cur->is_expanded;
@@ -1832,7 +1844,7 @@ void ui_check_key(void) {
 int ui_update_progress_begin(void) {
   if (update_progress_active || !ui_enabled || current_menu < 0) return 0;
   update_progress_active = 1;
-  update_progress_title = "BMX8bit Update";
+  update_progress_title = "BMRetroSys Update";
   update_progress_phase = 0U;  update_progress_per_mille = 0U;
   update_progress_determinate = 0;
   update_progress_cancel_enabled = 1;
@@ -1928,7 +1940,11 @@ void ui_update_progress_end(void) {
 }
 
 void ui_handle_toggle_or_quick_func() {
+  // Background network jobs (Atarimania worker on core 0) report back
+  // here: this runs every menu-pump iteration on the menu thread.
+  ui_poll_background_work();
   // This ensures we transition from emulator to ui only after we've
+  ui_poll_background_work();
   // submitted key events and let the emulator process them. Otherwise,
   // we can leave keys in a down state unintentionally. Needs to be set
   // to 2 to ensure we dequeue, then let the emulator process those events.

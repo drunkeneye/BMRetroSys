@@ -145,6 +145,15 @@ public:
 
   void SetUsesShader(bool enable);
 
+  // Mailbox present mode (BMX dos only): the producer outruns the
+  // display (70fps guest into 50Hz PAL). When set, PresentLayerList skips
+  // the previous-present fence for this layer, so submits never block the
+  // producer; the display picks up the latest pending frame at its own
+  // vsync (a pending back buffer is overwritten, never a scanning one, so
+  // no tear). Default off: all existing callers keep genlocked behavior.
+  void SetMailbox(bool enable);
+  bool Mailbox() const;
+
   // NOTE: This will implicitly Hide the layer since the shader must be
   // destroyed and recompiled.
   void SetShaderParams(const struct bmx_crt_effect_params &params);
@@ -334,6 +343,7 @@ private:
 
   bool showing_;
   bool allocated_;
+  bool mailbox_ = false;
 
 #if !BMX_PI4_LEGACY_DISPLAY
   int pixelmode_;

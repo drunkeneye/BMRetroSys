@@ -1,0 +1,351 @@
+/*
+  Hatari - main.c
+
+  This file is distributed under the GNU General Public License, version 2
+  or at your option any later version. Read the file gpl.txt for details.
+
+  Main initialization and event handling routines.
+*/
+const char Main_fileid[] = "Hatari main.c";
+
+#include <time.h>
+
+#include "main.h"
+#include "version.h"
+#include "configuration.h"
+#include "control.h"
+#include "conv_st.h"
+#include "options.h"
+#include "dialog.h"
+#include "event.h"
+#include "audio.h"
+#include "joy_ui.h"
+#include "file.h"
+#include "floppy.h"
+#include "floppies/ipf.h"
+#include "floppies/stx.h"
+#include "gemdos.h"
+#include "mfp.h"
+#include "fdc.h"
+#include "hdc.h"
+#include "ide.h"
+#include "acia.h"
+#include "ikbd.h"
+#include "ioMem.h"
+#include "keymap.h"
+#include "log.h"
+#include "m68000.h"
+#include "midi.h"
+#include "ncr5380.h"
+#include "nvram.h"
+#include "paths.h"
+#include "printer.h"
+#include "reset.h"
+#include "rs232.h"
+#include "rtc.h"
+#include "scc.h"
+#include "screen.h"
+#include "shortcut.h"
+#include "sound.h"
+#include "dmaSnd.h"
+#include "statusbar.h"
+#include "stMemory.h"
+#include "str.h"
+#include "timing.h"
+#include "tos.h"
+#include "video.h"
+#include "avi_record.h"
+#include "debugui.h"
+#include "clocks_timings.h"
+
+#include "hatari-glue.h"
+
+#include "falcon/dsp.h"
+#include "falcon/videl.h"
+
+#ifdef WIN32
+#include "gui-win/opencon.h"
+#endif
+
+bool bQuitProgram = false;                /* Flag to quit program cleanly */
+bool bEmulationActive = true;             /* Run emulation when started */
+
+
+/**
+ * Pause emulation, stop sound.  'visualize' should be set true,
+ * unless unpause will be called immediately afterwards.
+ * 
+ * @return true if paused now, false if was already paused
+ */
+bool Main_PauseEmulation(bool visualize)
+{
+	if ( !bEmulationActive )
+		return false;
+
+	Audio_EnableAudio(false);
+	bEmulationActive = false;
+	if (visualize)
+	{
+		Timing_PrintSpeed();
+
+		Screen_StatusbarMessage("Emulation paused", 100);
+
+		/* Un-grab mouse pointer if necessary, but keep old bGrabMouse state */
+		if (bGrabMouse || bInFullScreen)
+			bGrabMouse = Screen_UngrabMouse();
+	}
+	return true;
+}
+
+
+/**
+ * Start/continue emulation
+ * 
+ * @return true if continued, false if was already running
+ */
+bool Main_UnPauseEmulation(void)
+{
+	if ( bEmulationActive )
+		return false;
+
+	Sound_BufferIndexNeedReset = true;
+	Audio_EnableAudio(ConfigureParams.Sound.bEnableSound);
+	bEmulationActive = true;
+
+	/* Cause full screen update (to clear all) */
+	ConvST_SetFullUpdate();
+
+	/* Grab mouse pointer again */
+	Screen_GrabMouseIfNecessary();
+
+	return true;
+}
+
+
+/**
+ * Initialise emulation for some hardware components
+ * It is required to init those parts before parsing the parameters
+ * (for example, we should init FDC before inserting a disk and we
+ * need to know valid joysticks before selecting default joystick IDs)
+ */
+static void Main_Init_HW(void)
+{
+	JoyUI_Init();
+	FDC_Init();
+	STX_Init();
+	Video_InitTimings();
+}
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Initialise emulation
+ */
+static void Main_InitSubsystems(void)
+{
+	/* Open debug log file */
+	if (!Log_Init())
+	{
+		Main_ErrorExit("Logging/tracing initialization failed", NULL, -1);
+	}
+	Log_Printf(LOG_INFO, PROG_NAME ", compiled on:  " __DATE__ ", " __TIME__ "\n");
+
+	if ( IPF_Init() != true )
+	{
+		Main_ErrorExit("Could not initialize the IPF support", NULL, -1);
+	}
+
+	ClocksTimings_InitMachine ( ConfigureParams.System.nMachineType );
+	Video_SetTimings ( ConfigureParams.System.nMachineType , ConfigureParams.System.VideoTimingMode );
+
+	Printer_Init();
+	MFP_Init(MFP_Array);
+	RS232_Init();
+	SCC_Init();
+	Midi_Init();
+	Videl_Init();
+	ConvST_Init();
+	Screen_Init();
+
+	STMemory_Init ( ConfigureParams.Memory.STRamSize_KB * 1024 );
+
+	ACIA_Init( ACIA_Array , MachineClocks.ACIA_Freq , MachineClocks.ACIA_Freq );
+	IKBD_Init();			/* After ACIA_Init */
+
+	DSP_Init();
+	Floppy_Init();
+	M68000_Init();                /* Init CPU emulation */
+	Audio_Init();
+	Keymap_Init();
+
+	/* Init HD emulation */
+	HDC_Init();
+	Ncr5380_Init();
+	Ide_Init();
+	GemDOS_Init();
+	if (ConfigureParams.HardDisk.bUseHardDiskDirectories)
+	{
+		/* uses variables set by HDC_Init/Ncr5380_Init/Ide_Init */
+		GemDOS_InitDrives();
+	}
+
+	if (Reset_Cold())             /* Reset all systems, load TOS image */
+	{
+		/* If loading of the TOS failed, we bring up the GUI to let the
+		 * user choose another TOS ROM file. */
+		Dialog_DoProperty();
+	}
+	if (!bTosImageLoaded || bQuitProgram)
+	{
+		const char *msg = bTosImageLoaded ? NULL : "Failed to load TOS image";
+		Main_ErrorExit(msg, NULL, -2);
+	}
+
+	IoMem_Init();
+	NvRam_Init();
+	Sound_Init();
+	Rtc_Init();
+
+	/* done as last, needs CPU & DSP running... */
+	DebugUI_Init();
+}
+
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Un-Initialise emulation
+ */
+static void Main_UnInitSubsystems(void)
+{
+	Screen_ReturnFromFullScreen();
+	Floppy_UnInit();
+	HDC_UnInit();
+	Ncr5380_UnInit();
+	Midi_UnInit();
+	SCC_UnInit();
+	RS232_UnInit();
+	Printer_UnInit();
+	IoMem_UnInit(ConfigureParams.System.nMachineType);
+	NvRam_UnInit();
+	GemDOS_UnInitDrives();
+	Ide_UnInit();
+	JoyUI_UnInit();
+	if (Sound_AreWeRecording())
+		Sound_EndRecording();
+	Audio_UnInit();
+	DSP_UnInit();
+	Screen_UnInit();
+	ConvST_UnInit();
+	Exit680x0();
+
+	IPF_Exit();
+
+	/* Close debug log file */
+	DebugUI_UnInit();
+	Log_UnInit();
+
+	Paths_UnInit();
+}
+
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Load initial configuration files. The global config file is skipped in
+ * test mode (i.e. if the HATARI_TEST environment variable has been set),
+ * so that the test has always full control over the configuration settings.
+ */
+static void Main_LoadInitialConfig(void)
+{
+	char *psGlobalConfig;
+
+	if (getenv("HATARI_TEST"))
+		psGlobalConfig = NULL;
+	else
+		psGlobalConfig = malloc(FILENAME_MAX);
+	if (psGlobalConfig)
+	{
+		File_MakePathBuf(psGlobalConfig, FILENAME_MAX, CONFDIR,
+		                 "hatari", "cfg");
+		/* Try to load the global configuration file */
+		Configuration_Load(psGlobalConfig);
+
+		free(psGlobalConfig);
+	}
+
+	/* Now try the users configuration file */
+	Configuration_Load(NULL);
+	if (ConfigureParams.Keyboard.nLanguage == TOS_LANG_UNKNOWN)
+		ConfigureParams.Keyboard.nLanguage = TOS_DefaultLanguage();
+}
+
+
+/**
+ * Main
+ * 
+ * Note: 'argv' cannot be declared const, MinGW would then fail to link.
+ */
+void Main_Init(int argc, char *argv[])
+{
+	int exitval;
+
+	/* Setup for string conversions */
+	Str_Init();
+
+	/* Logs default to stderr at start */
+	Log_Default();
+
+	/* Initialize event actions */
+	Event_Init();
+
+	/* Initialize directory strings */
+	Paths_Init(argv[0]);
+
+	/* few options need to be parsed for logging / tracing
+	 * from the early initializations to work as expected
+	 */
+	if (!Opt_InitLogging(argc, (const char * const *)argv))
+		Main_ErrorExit(NULL, NULL, 1);
+
+	/* Init some HW components before parsing the configuration / parameters */
+	Main_Init_HW();
+
+	/* Set default configuration values */
+	Configuration_SetDefault();
+
+	/* Now load the values from the configuration file */
+	Main_LoadInitialConfig();
+
+	/* Check for any passed parameters */
+	if (!Opt_ParseParameters(argc, (const char * const *)argv, &exitval))
+	{
+		Control_RemoveFifo();
+		Main_ErrorExit(NULL, NULL, exitval);
+	}
+
+	/* monitor type option might require "reset" -> true */
+	Configuration_Apply(true);
+
+#ifdef WIN32
+	Win_OpenCon();
+#endif
+
+	/* Init emulator system */
+	Main_InitSubsystems();
+
+	/* Set initial Statusbar information */
+	Statusbar_InitialSetup();
+	
+	/* Check if Timing_Delay is accurate */
+	Timing_CheckForAccurateDelays();
+}
+
+
+void Main_UnInit(void)
+{
+	Control_RemoveFifo();
+
+	/* cleanly close the AVI file, if needed */
+	Avi_StopRecording_WithMsg();
+
+	/* Un-init emulation system */
+	Main_UnInitSubsystems();
+}

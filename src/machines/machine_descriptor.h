@@ -11,6 +11,9 @@ enum class MachineId {
   PLUS4,
   PET,
   ATARI800,
+  DOS,
+  ATARIST,
+  AMIGA,
 };
 
 struct MachineCycleProfile {

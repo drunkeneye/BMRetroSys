@@ -46,6 +46,9 @@ typedef enum {
   BMC64_MACHINE_CLASS_PLUS4EMU,
   BMC64_MACHINE_CLASS_PET,
   BMC64_MACHINE_CLASS_ATARI800,
+  BMC64_MACHINE_CLASS_DOS,
+  BMC64_MACHINE_CLASS_ATARIST,
+  BMC64_MACHINE_CLASS_AMIGA,
 } BMC64MachineClass;
 
 typedef enum {
@@ -363,6 +366,10 @@ int emux_attach_cart(int bank, char *filename);
 // negative. Saving writes a copy and does not enable automatic write-back.
 int emux_load_reu_image(char *filename);
 int emux_save_reu_image(char *filename);
+
+// Attach an Amiga hardfile (.hdf) to HD unit 0/1. Only the Amiga bridge
+// implements this (weak stub returns negative everywhere else).
+int emux_attach_hdf_image(int drive, char *filename);
 
 // Make current attached cartridge the default
 void emux_set_cart_default(void);

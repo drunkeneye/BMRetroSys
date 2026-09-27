@@ -4,7 +4,7 @@ namespace bmx {
 namespace remote {
 namespace {
 
-const char kUiRoot[] = "/bmx/dev/ui";
+const char kUiRoot[] = "/bmretrosys/dev/ui";
 const uint64_t kMaximumUiAssetBytes = 512U * 1024U;
 const char kNotFound[] = "not found\n";
 const char kBadRequest[] = "bad request\n";
@@ -23,11 +23,11 @@ struct AssetRoute {
 };
 
 const AssetRoute kAssetRoutes[] = {
-    {"/bmx/dev/ui/", "bmx/dev/ui/index.html", "text/html; charset=utf-8"},
-    {"/bmx/dev/ui/app.css", "bmx/dev/ui/app.css", "text/css; charset=utf-8"},
-    {"/bmx/dev/ui/core.mjs", "bmx/dev/ui/core.mjs",
+    {"/bmretrosys/dev/ui/", "bmretrosys/dev/ui/index.html", "text/html; charset=utf-8"},
+    {"/bmretrosys/dev/ui/app.css", "bmretrosys/dev/ui/app.css", "text/css; charset=utf-8"},
+    {"/bmretrosys/dev/ui/core.mjs", "bmretrosys/dev/ui/core.mjs",
      "text/javascript; charset=utf-8"},
-    {"/bmx/dev/ui/app.mjs", "bmx/dev/ui/app.mjs",
+    {"/bmretrosys/dev/ui/app.mjs", "bmretrosys/dev/ui/app.mjs",
      "text/javascript; charset=utf-8"},
 };
 
@@ -51,7 +51,7 @@ void SetTextResponse(HttpResponse *response, unsigned status,
 const AssetRoute *FindAsset(HttpStringView raw_path)
 {
     if (HttpStringEquals(raw_path, kUiRoot)) {
-        raw_path = HttpString("/bmx/dev/ui/");
+        raw_path = HttpString("/bmretrosys/dev/ui/");
     }
     for (size_t index = 0U;
          index < sizeof(kAssetRoutes) / sizeof(kAssetRoutes[0]); ++index) {

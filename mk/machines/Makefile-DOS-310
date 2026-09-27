@@ -1,0 +1,16 @@
+#
+# Makefile for an DOS kernel using BMX
+#
+# The DOS/DOSBox-X core is not vendored yet (no third_party core).
+# Placeholder: compiled from src/dos only.  This file only selects the
+# machine class and lets the main Makefile do the rest.
+#
+
+MACHINE_CLASS = RASPI_DOS
+
+# For now run the dos frame loop on core 1 like the other machines.
+BMX_EMU_MULTICORE ?= 1
+
+VICELIBS :=
+
+include Makefile

@@ -32,7 +32,7 @@
 #endif
 
 #define BMX_MACHINES_FILE "machines.ini"
-#define BMX_ACTIVE_KERNEL_SELECTOR "bmx-active-kernel.txt"
+#define BMX_ACTIVE_KERNEL_SELECTOR "bmretrosys-active-kernel.txt"
 #define BMX_KERNEL_SELECTOR_HEADER "# BMX-KERNEL-SELECTOR-V2\n"
 
 #define ERROR_INVALID_CONFIG 1
@@ -49,6 +49,11 @@ enum section_kind {
   SECTION_VIDEO,
   SECTION_SCALING,
   SECTION_MACHINE,
+  // Forward-compatibility: [machine X] sections whose class this kernel
+  // does not know (added by a newer release) are skipped instead of
+  // invalidating the whole file. Lets old kernels boot with a newer
+  // machines.ini; the unknown machine simply isn't offered.
+  SECTION_SKIP,
 };
 
 struct pi_kernel_spec {
@@ -297,6 +302,15 @@ static BMC64MachineClass parse_machine_class(const char *name) {
   }
   if (strcasecmp(name, "ATARI800") == 0) {
     return BMC64_MACHINE_CLASS_ATARI800;
+  }
+  if (strcasecmp(name, "DOS") == 0) {
+    return BMC64_MACHINE_CLASS_DOS;
+  }
+  if (strcasecmp(name, "ATARIST") == 0) {
+    return BMC64_MACHINE_CLASS_ATARIST;
+  }
+  if (strcasecmp(name, "AMIGA") == 0) {
+    return BMC64_MACHINE_CLASS_AMIGA;
   }
   return BMC64_MACHINE_CLASS_UNKNOWN;
 }
@@ -850,6 +864,11 @@ int load_machine_config(struct bmx_machine_config **result) {
         current = scaling;
       } else if (strcasecmp(kind, "machine") == 0) {
         struct bmx_machine *machine;
+        if (parse_machine_class(id) == BMC64_MACHINE_CLASS_UNKNOWN) {
+          section = SECTION_SKIP;
+          current = NULL;
+          continue;
+        }
         if (config->num_machines >= BMX_MAX_MACHINES) {
           config_error(line_number, "too many machines", id);
           goto fail;
@@ -912,6 +931,8 @@ int load_machine_config(struct bmx_machine_config **result) {
         config_error(line_number, "invalid machine option", key);
         goto fail;
       }
+    } else if (section == SECTION_SKIP) {
+      /* Unknown machine class: ignore its keys (see SECTION_SKIP). */
     }
   }
 
@@ -958,6 +979,7 @@ static int model_uses_release_selector(int pi_model) {
 static int normal_machine_kernel_name(const char *name, size_t length) {
   static const char *const machines[] = {
       "c64", "c64sc", "scpu64", "c128", "vic20", "plus4", "pet", "atari800",
+      "dos", "atarist", "amiga",
   };
   size_t i;
 
@@ -1072,6 +1094,12 @@ static const char *kernel_suffix_for_machine_class(
       return ".pet";
     case BMC64_MACHINE_CLASS_ATARI800:
       return ".atari800";
+    case BMC64_MACHINE_CLASS_DOS:
+      return ".dos";
+    case BMC64_MACHINE_CLASS_ATARIST:
+      return ".atarist";
+    case BMC64_MACHINE_CLASS_AMIGA:
+      return ".amiga";
     default:
       return NULL;
   }

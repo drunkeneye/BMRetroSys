@@ -36,7 +36,7 @@ extern "C" {
 
 #define NUM_MENU_ROOTS 5
 #define MAX_CHOICES    64
-#define MAX_MENU_STR   36
+#define MAX_MENU_STR   48
 #define MAX_FN_NAME    20 // only limit for new file names
 
 #define MAX_STR_VAL_LEN 256 // should match max fn from ffconf.h
@@ -357,6 +357,9 @@ extern volatile int ui_enabled;
 extern int ui_showing;
 
 void ui_handle_toggle_or_quick_func(void);
+// Background network-job completion pump (menu.c; no-op unless a job
+// modal is open). Called every menu-pump iteration.
+void ui_poll_background_work(void);
 void ui_render_single_frame(void);
 
 // Fixed, value-free foreground updater overlay.  These functions are inert

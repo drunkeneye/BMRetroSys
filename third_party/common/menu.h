@@ -197,11 +197,6 @@ typedef enum {
    MENU_VOLUME_USB3
 } MenuVolume;
 
-typedef enum {
-   MENU_DIR_CONVENTION_FOLDER_EMU = 0,
-   MENU_DIR_CONVENTION_EMU_FOLDER,
-} MenuDirConvention;
-
 // Make these match vice
 typedef enum {
    MENU_VIDEO_FILTER_NONE = 0,

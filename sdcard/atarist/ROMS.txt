@@ -1,0 +1,11 @@
+# ATARIST (Atari ST/STE/MegaSTE) ROM notes.
+#
+# Zero-config default: EmuTOS 1.4 UK (GPL) is staged at
+# /roms/tos/etos512uk.img and boots straight to GEM. No action needed.
+#
+# Genuine TOS pool (proprietary, NEVER in git): unzip TOS images into
+# /roms/tos/ on the SD card (legacy /tos/ still works):
+#   tos106uk.img - TOS 1.06 UK (STE)
+#   tos162uk.img - TOS 1.62 UK (STE, latest STE TOS)
+#   tos206uk.img - TOS 2.06 UK (MegaSTE)
+# Floppies live on the SD card under /systems/ATARIST/disks (.ST/.MSA; .STX later).

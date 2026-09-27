@@ -5,6 +5,7 @@
 
 #include "zipbrowse.h"
 
+#include <circle/timer.h>
 #include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
@@ -148,9 +149,12 @@ bool ExtractStreamCallback(uint64_t produced, uint64_t total, void *ctx) {
     permille = 1000U;
   }
   {
-    char line[96];
-    snprintf(line, sizeof(line), "stream %llu/%llu",
-             (unsigned long long)produced, (unsigned long long)total);
+    // Timestamped: gaps between consecutive lines locate the stalling
+    // chunk (read/inflate/write of one 256KB step).
+    char line[128];
+    snprintf(line, sizeof(line), "stream %llu/%llu t=%lu us",
+             (unsigned long long)produced, (unsigned long long)total,
+             CTimer::GetClockTicks());
     zipbrowse_trace(line);
   }
   ui_update_progress_present(2 /* Zip */, permille, 1, 1, 0);
@@ -315,9 +319,13 @@ int zipbrowse_extract(const char *entry_path, const char *out_abs_path,
     ui_update_progress_present(2 /* Zip */, 0, 1, 1, 0);
   }
   {
-    char line[160];
-    snprintf(line, sizeof(line), "extract %s size=%llu files=%u", found->path,
-             (unsigned long long)found->size, (unsigned)nf);
+    char line[192];
+    snprintf(line, sizeof(line),
+             "extract %s size=%llu compressed=%llu method=%u files=%u t=%lu",
+             found->path, (unsigned long long)found->size,
+             (unsigned long long)found->compressed_size,
+             (unsigned)found->compression, (unsigned)nf,
+             CTimer::GetClockTicks());
     zipbrowse_trace(line);
   }
   ZipStatus st = g_reader.ExtractOneSinglePass(

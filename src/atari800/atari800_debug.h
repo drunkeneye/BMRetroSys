@@ -4,7 +4,7 @@
 // SD-card debug log for the BMX atari800 machine.
 //
 // The Pi runs headless for most users (no UART), so boot progress and the
-// atari800 core's own buffered log are tee'd to bmx-atari800.log at the
+// atari800 core's own buffered log are tee'd to bmretrosys-atari800.log at the
 // root of the first writable SD volume. The user reads it on a PC.
 //
 

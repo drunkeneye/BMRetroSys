@@ -103,6 +103,7 @@ public:
   void circle_set_src_rect_fbl(int layer, int x, int y, int w, int h);
   void circle_set_valign_fbl(int layer, int align, int padding);
   void circle_set_halign_fbl(int layer, int align, int padding);
+  void circle_set_mailbox_fbl(int layer, int enable);
   void circle_set_padding_fbl(int layer, double lpad, double rpad, double tpad, double bpad);
   void circle_set_zlayer_fbl(int layer, int zlayer);
   int circle_get_zlayer_fbl(int layer);

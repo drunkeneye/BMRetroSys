@@ -1,0 +1,781 @@
+/*
+  Hatari - floppy_kfs.c
+
+  This file is distributed under the GNU General Public License, version 2 or at
+  your option any later version. Read the file gpl.txt for details.
+
+  KFS (KryoFlux Stream raw) disk image support.
+
+  KFS files contain low level flux transitions as directly read from the floppy drive.
+  These flux transitions will be converted to MFM bits and the resulting MFM buffer
+  will be processed by emulating the WD1772 internal work.
+
+  */
+const char floppy_kfs_fileid[] = "Hatari floppy_kfs.c";
+
+#include "main.h"
+#include "file.h"
+#include "floppy.h"
+#include "fdc.h"
+#include "floppies/kfs.h"
+#include "log.h"
+#include "memorySnapShot.h"
+#include "screen.h"
+#include "video.h"
+#include "m68000.h"
+#include "cycles.h"
+#include "utils.h"
+#include "str.h"
+#include "file_archive.h"
+
+
+
+static KFS_STRUCT		KFS_State;
+
+
+
+
+/*--------------------------------------------------------------*/
+/* Local functions prototypes					*/
+/*--------------------------------------------------------------*/
+
+static bool	KFS_CheckTrack ( const char *FileName , uint8_t *p , long Size );
+static bool	KFS_Insert_Internal ( int Drive , bool KeepState );
+static char	*KFS_FilenameFindTrackSide (char *FileName);
+
+static kfs_index *kfs_decode_index(unsigned char *dat, unsigned int datsz, int *p_index_count);
+
+static int	kfs_select_track(struct mfm_stream *s, unsigned int tracknr);
+static void	kfs_reset(struct mfm_stream *s);
+static int	kfs_next_flux(struct mfm_stream *s);
+
+
+
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Save/Restore snapshot of local variables ('MemorySnapShot_Store' handles type)
+ */
+void	KFS_MemorySnapShot_Capture(bool bSave)
+{
+	int	Drive;
+	int	Track , Side;
+	int	TrackSize;
+	uint8_t	*p;
+	bool	KeepState;
+
+
+	if ( bSave )					/* Saving snapshot */
+	{
+		for ( Drive=0 ; Drive < MAX_FLOPPYDRIVES ; Drive++ )
+		{
+			MemorySnapShot_Store(&KFS_State.KFS_Stream[ Drive ], sizeof(struct kfs_stream));
+
+			/* Save the content of KFS_State.TracksImage[ Drive ] */
+			for ( Track=0 ; Track<KF_MAX_TRACK_RAW_STREAM_IMAGE ; Track++ )
+				for ( Side=0 ; Side<KF_MAX_SIDE_RAW_STREAM_IMAGE ; Side++ )
+				{
+					TrackSize = KFS_State.TracksImage[ Drive ][ Track ][Side].TrackSize;
+//						fprintf ( stderr , "KFS : save raw stream drive=%d track=%d side=%d : %d\n" , Drive , Track , Side , TrackSize );
+					MemorySnapShot_Store(&TrackSize, sizeof(TrackSize));
+					if ( TrackSize > 0 )
+						MemorySnapShot_Store(KFS_State.TracksImage[ Drive ][ Track ][Side].TrackData, TrackSize);
+				}
+		}
+	}
+
+	else						/* Restoring snapshot */
+	{
+		/* NOTE  : KFS_Insert might already have read the raw tracks from disk, */
+		/* so we free all those tracks and read them again from the snapshot instead */
+		/* (not very efficient, but it's a rare case anyway) */
+		for ( Drive=0 ; Drive < MAX_FLOPPYDRIVES ; Drive++ )
+		{
+			/* If a KFS floppy is already loaded when restoring, we free its data first */
+			KFS_Eject ( Drive );
+
+			MemorySnapShot_Store(&KFS_State.KFS_Stream[ Drive ], sizeof(struct kfs_stream));
+
+			for ( Track=0 ; Track<KF_MAX_TRACK_RAW_STREAM_IMAGE ; Track++ )
+				for ( Side=0 ; Side<KF_MAX_SIDE_RAW_STREAM_IMAGE ; Side++ )
+				{
+					MemorySnapShot_Store(&TrackSize, sizeof(TrackSize));
+//						fprintf ( stderr , "KFS : restore raw stream drive=%d track=%d side=%d : %d\n" , Drive , Track , Side , TrackSize );
+					KFS_State.TracksImage[ Drive ][ Track ][Side].TrackSize = TrackSize;
+					KFS_State.TracksImage[ Drive ][ Track ][Side].TrackData = NULL;
+					if ( TrackSize > 0 )
+					{
+						p = malloc ( TrackSize );
+						if ( p == NULL )
+						{
+							Log_AlertDlg(LOG_ERROR, "Error restoring KFS raw track drive %d track %d side %d size %d" ,
+								Drive, Track, Side , TrackSize );
+							return;
+						}
+						MemorySnapShot_Store(p, TrackSize);
+						KFS_State.TracksImage[ Drive ][ Track ][Side].TrackData = p;
+					}
+				}
+
+			if ( EmulationDrives[Drive].ImageType == FLOPPY_IMAGE_TYPE_KFS )
+			{
+				KeepState = true;
+				if ( KFS_Insert_Internal ( Drive , KeepState ) == false )
+				{
+					Log_AlertDlg(LOG_ERROR, "Error restoring KFS image %s in drive %d" ,
+						EmulationDrives[Drive].sFileName , Drive );
+					return;
+				}
+
+				/* If a track was loaded/selected at the time the snapshot was saved, */
+				/* we need to reload/select it now */
+				if ( KFS_State.KFS_Stream[ Drive ].track >= 0 )
+				{
+					Track = KFS_State.KFS_Stream[ Drive ].track;
+					KFS_State.KFS_Stream[ Drive ].track = -1;	/* Force a reload */
+					kfs_select_track ( &MFM_STREAMS[ Drive ] , Track );
+				}
+			}
+		}
+	}
+}
+
+
+
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Does filename end with a .RAW extension ? (Kryoflux stream)
+ */
+bool KFS_FileNameIsKFS ( const char *pszFileName, bool bAllowGZ )
+{
+	return ( File_DoesFileExtensionMatch(pszFileName,".raw" )
+		|| ( bAllowGZ && File_DoesFileExtensionMatch(pszFileName,".raw.gz") )
+		);
+}
+
+
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Check if a .raw track file is a valid KFS track
+ * There's no specific header in the file to check this, so we use some simple
+ * heuristics to check for some OOB elements in the file :
+ *  - 0D 04 at the start (kfinfo)
+ *  - 0D 01 08 at the start (stream info)
+ *  - 0D 02 0C at the start (index info)
+ *  - 0D 03 08 near the end (stream end)
+ *  - 0D 0D at the end (EOF block)
+ */
+
+static bool KFS_CheckTrack ( const char *FileName , uint8_t *p , long Size )
+{
+	bool	found_0D04;
+	bool	found_0D0108;
+	bool	found_0D020C;
+	bool	found_0D0308;
+	int	i;
+
+	if ( Size < 1000 )
+	{
+		Log_Printf ( LOG_ERROR , "KFS : %s, file is too short\n" , FileName );
+		return false;
+	}
+
+	/* Check 0D 04 at the start (kfinfo) */
+	found_0D04 = false;
+	if ( ( p[0] == 0x0D ) && ( p[1] == 0x04 ) )
+		found_0D04 = true;
+
+	/* Check 0D 01 08 in the 300 first bytes (stream info) */
+	/* or check 0D 02 0C in the 300 first bytes (index info) */
+	found_0D0108 = false;
+	found_0D020C = false;
+	for ( i=0 ; i<300 ; i++ )
+	{
+		if ( ( p[i] == 0x0D ) && ( p[i+1] == 0x01 ) && ( p[i+2] == 0x08 ) )
+			found_0D0108 = true;
+		else if ( ( p[i] == 0x0D ) && ( p[i+1] == 0x02 ) && ( p[i+2] == 0x0C ) )
+			found_0D020C = true;
+	}
+
+	if ( !found_0D04 && !found_0D0108 && !found_0D020C )
+	{
+		Log_Printf ( LOG_ERROR , "KFS : %s, no info block 0D 04 or 0D 01 08 or 0D 02 0C at start\n" , FileName );
+		return false;
+	}
+
+	/* Check 0D 03 08 in the 50 last bytes (stream end) */
+	found_0D0308 = false;
+	for ( i=Size-50 ; i<Size-3 ; i++ )
+		if ( ( p[i] == 0x0D ) && ( p[i+1] == 0x03 ) && ( p[i+2] == 0x08 ) )
+			found_0D0308 = true;
+	if ( !found_0D0308 )
+	{
+		Log_Printf ( LOG_ERROR , "KFS : %s, no stream end OD O3 O8\n" , FileName );
+		return false;
+	}
+
+	/* Check 0D 0D at the end (EOF block) */
+	if ( ( p[Size-2] != 0x0d ) || ( p[Size-1] != 0x0d ) )
+	{
+		Log_Printf ( LOG_ERROR , "KFS : %s, no EOF block at the end\n" , FileName );
+		return false;
+	}
+
+	return true;
+}
+
+
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Load KFS .RAW file into memory, set number of bytes loaded and return a pointer
+ * to the buffer.
+ */
+uint8_t *KFS_ReadDisk ( int Drive, const char *pszFileName, long *pImageSize, int *pImageType )
+{
+	uint8_t *pFile;
+
+	*pImageSize = 0;
+
+	/* Just load directly a buffer, and set ImageSize accordingly */
+	pFile = File_Read(pszFileName, pImageSize, NULL);
+	if (!pFile)
+	{
+		*pImageSize = 0;
+		return NULL;
+	}
+	
+	*pImageType = FLOPPY_IMAGE_TYPE_KFS;
+	return pFile;
+}
+
+
+
+/*-----------------------------------------------------------------------*/
+/**
+ * Save KFS .RAW file from memory buffer. Returns true is all OK.
+ *  -> saving is not supported for .RAW files
+ */
+bool	KFS_WriteDisk ( int Drive, const char *pszFileName, uint8_t *pBuffer, int ImageSize )
+{
+	return false;
+}
+
+
+/*
+ * Return a pointer to the part "tt.s.raw" at the end of the filename
+ * (there can be an extra suffix to ignore if the file is compressed).
+ * If we found a string where "tt" and "s" are digits, then we return
+ * a pointer to this string.
+ * If not found, we return NULL
+ */
+static char *KFS_FilenameFindTrackSide (char *FileName)
+{
+	char	ext[] = ".raw";
+	int	len;
+	char	*p;
+
+	len = strlen ( FileName );
+	len -= strlen ( ext );
+
+	while ( len >= 4 )				/* need at least 4 chars for "tt.s" */
+	{
+		if ( strncasecmp ( ext , FileName + len , strlen ( ext ) ) == 0 )
+		{
+			p = FileName + len - 4;
+			if ( isdigit( p[0] ) && isdigit( p[1] )
+			  && ( p[2] == '.' ) && isdigit( p[3] ) )
+				return p;
+		}
+
+		len--;
+	}
+
+	return NULL;
+}
+
+
+
+/*-----------------------------------------------------------------------*/
+/*
+ * Init the resources to handle the KFS image inserted into a drive (0=A: 1=B:)
+ */
+
+/*
+ * Load all the raw stream files for all tracks/sides of a dump.
+ * We use the filename of the raw file in drive 'Drive' as a template
+ * where we replace track and side with all the possible values.
+ */
+bool	KFS_Insert ( int Drive , const char *FilenameKFS , const char *PathInArchive , uint8_t *pImageBuffer , long ImageSize )
+{
+	int	Track , Side;
+	char	TrackFileName[ FILENAME_MAX ];
+	char	*TrackSide_pointer;
+	char	TrackSide_buf[ 4 + 1 ];			/* "tt.s" + \0 */
+	int	TrackCount_0 , TrackCount_1;
+	uint8_t	*p;
+	uint8_t	*p2;
+	long	Size;
+	bool	KeepState;
+	int	ImageType_temp;
+
+	Log_Printf(LOG_INFO, "KFS_Insert filename=<%s> path_in_archive=<%s>\n" , FilenameKFS , PathInArchive );
+
+	/* Ensure the previous tracks are removed from memory */
+	KFS_Eject ( Drive );
+
+	/* Get the path+filename of the raw file that was inserted in 'Drive' */
+	/* then parse it to find the part with track/side */
+	/* The raw file can be loaded directly using 'FilenameKFS' or loaded through */
+	/* the archive file 'FilenameKFS' using 'PathInArchive' */
+	if ( PathInArchive == NULL )
+		Str_Copy ( TrackFileName , FilenameKFS , FILENAME_MAX );
+	else
+		Str_Copy ( TrackFileName , PathInArchive , FILENAME_MAX );
+
+
+	TrackSide_pointer = KFS_FilenameFindTrackSide ( TrackFileName );
+	if ( TrackSide_pointer == NULL )
+	{
+		Log_Printf ( LOG_ERROR , "KFS : error parsing track/side in raw filename\n" );
+		return false;
+	}
+
+	/* We try to load all the tracks for all the sides */
+	/* We ignore errors, as some tracks/side can really be missing from the image dump */
+	TrackCount_0 = 0;
+	TrackCount_1 = 0;
+	for ( Track=0 ; Track<KF_MAX_TRACK_RAW_STREAM_IMAGE ; Track++ )
+	{
+		for ( Side=0 ; Side<KF_MAX_SIDE_RAW_STREAM_IMAGE ; Side++ )
+		{
+			sprintf ( TrackSide_buf , "%02d.%d" , Track , Side );
+			memcpy ( TrackSide_pointer , TrackSide_buf , 4 );
+			Log_Printf ( LOG_INFO , "KFS : insert raw stream drive=%d track=%d side=%d trackfile=%s\n" , Drive , Track , Side , TrackFileName );
+
+			/* Load track directly or using an archive ? */
+			if ( PathInArchive == NULL )
+				p = File_Read ( TrackFileName , &Size , NULL );
+			else
+				p = Archive_ReadDisk ( Drive , FilenameKFS , TrackFileName , &Size , &ImageType_temp );
+
+			if ( p )
+			{
+				/* Is this a valid KFS track dump ? */
+				if ( ! KFS_CheckTrack ( TrackFileName , p , Size ) )
+				{
+					free(p);
+					continue;			/* ignore this raw file */
+				}
+
+				/* Print the "name=" part if it was not made with KryoFlux */
+				p2 = Str_FindInMem ( "name=" , p , 200 );
+				if ( p2 == NULL )
+					Log_Printf ( LOG_WARN , "KFS : no software name in raw stream header, old KryopFlux format ? drive=%d track=%d side=%d trackfile=%s\n" , Drive , Track , Side , TrackFileName );
+
+				else if ( strncasecmp ( "KryoFlux" , (char *) p2+strlen("name=") , strlen("KryoFlux") ) != 0 )
+					Log_Printf ( LOG_WARN , "KFS : no Kryoflux signature in raw stream, found <%s> drive=%d track=%d side=%d trackfile=%s\n" , p2 , Drive , Track , Side , TrackFileName );
+
+				KFS_State.TracksImage[ Drive ][ Track ][Side].TrackData = p;
+				KFS_State.TracksImage[ Drive ][ Track ][Side].TrackSize = Size;
+				if ( Side==0 )		TrackCount_0++;
+				else			TrackCount_1++;
+			}
+			else
+			{
+				Log_Printf ( LOG_INFO , "KFS : insert raw stream drive=%d track=%d side=%d trackfile=%s -> not found\n" , Drive , Track , Side , TrackFileName );
+				/* File not loaded : either this track really doesn't exist or there was a system error */
+				KFS_State.TracksImage[ Drive ][ Track ][Side].TrackData = NULL;
+				KFS_State.TracksImage[ Drive ][ Track ][Side].TrackSize = 0;
+			}
+		}
+	}
+
+
+	/* If we didn't load any track, there's a problem, we stop here */
+	if ( TrackCount_0 + TrackCount_1 == 0 )
+	{
+		Log_Printf ( LOG_WARN , "KFS : error, no raw track file could be loaded for %s\n" , ConfigureParams.DiskImage.szDiskFileName[Drive] );
+		/* Free all the tracks that were loaded so far */
+		KFS_Eject ( Drive );
+		return false;
+	}
+
+
+	KeepState = false;
+	if ( KFS_Insert_Internal ( Drive , KeepState ) == false )
+	{
+		Log_Printf ( LOG_WARN , "KFS : error insert internal for %s\n" , ConfigureParams.DiskImage.szDiskFileName[Drive] );
+		/* Free all the tracks that were loaded so far */
+		KFS_Eject ( Drive );
+		return false;
+	}
+
+	Log_Printf ( LOG_INFO , "KFS : insert raw stream drive=%d, loaded %d tracks for side 0 and %d tracks for side 1\n", Drive, TrackCount_0, TrackCount_1 );
+
+	return true;
+}
+
+
+
+
+static bool	KFS_Insert_Internal ( int Drive , bool KeepState )
+{
+	Log_Printf ( LOG_DEBUG , "KFS : KFS_Insert_internal drive=%d\n" , Drive );
+
+
+	/* Init the flux decoder for a KFS stream + reset all variables */
+	if ( !KeepState )
+		mfm_stream_setup ( &(MFM_STREAMS[ Drive ]) , 300 , 300 );
+
+	MFM_STREAMS[ Drive ].type.select_track = kfs_select_track;
+	MFM_STREAMS[ Drive ].type.reset = kfs_reset;
+	MFM_STREAMS[ Drive ].type.next_flux = kfs_next_flux;
+	MFM_STREAMS[ Drive ].type.flux_struct_param = &(KFS_State.KFS_Stream[ Drive ]);
+
+	if ( !KeepState )
+		mfm_stream_reset ( &(MFM_STREAMS[ Drive ]) );
+
+	KFS_State.KFS_Stream[ Drive ].Drive = Drive;
+	KFS_State.KFS_Stream[ Drive ].dat = NULL;		/* no track loaded with kfs_select_track */
+	KFS_State.KFS_Stream[ Drive ].indexes_array = NULL;	/* no indexes loaded with kfs_select_track */
+//TODO		KFS_State.KFS_Stream[ Drive ].revs = KFS_State.ImageStruct[ Drive ]->RevolutionsNbr;
+
+	return true;
+}
+
+
+
+
+/*-----------------------------------------------------------------------*/
+/*
+ * When ejecting a RAW stream image we must free all the individual tracks
+ */
+bool	KFS_Eject ( int Drive )
+{
+	int	Track , Side;
+
+	Log_Printf ( LOG_DEBUG , "KFS : KFS_Eject drive=%d\n" , Drive );
+
+	for ( Track=0 ; Track<KF_MAX_TRACK_RAW_STREAM_IMAGE ; Track++ )
+		for ( Side=0 ; Side<KF_MAX_SIDE_RAW_STREAM_IMAGE ; Side++ )
+		{
+			if ( KFS_State.TracksImage[ Drive ][ Track ][Side].TrackData != NULL )
+			{
+				Log_Printf ( LOG_DEBUG , "KFS : eject raw stream drive=%d track=%d side=%d\n" , Drive , Track , Side );
+				free ( KFS_State.TracksImage[ Drive ][ Track ][Side].TrackData );
+				KFS_State.TracksImage[ Drive ][ Track ][Side].TrackData = NULL;
+				KFS_State.TracksImage[ Drive ][ Track ][Side].TrackSize = 0;
+			}
+		}
+
+	/* Free the track's indexes if needed */
+	if ( KFS_State.KFS_Stream[ Drive ].indexes_array )
+	{
+		free ( KFS_State.KFS_Stream[ Drive ].indexes_array );
+		KFS_State.KFS_Stream[ Drive ].indexes_array = NULL;
+	}
+
+	return true;
+}
+
+
+
+
+/*-----------------------------------------------------------------------*/
+/*
+ * Flux to MFM bit decoding - Support for Kryoflux raw stream disk image - BEGIN
+ * based on code by Keir Fraser https://github.com/keirf/Disk-Utilities
+ */
+
+#define MAX_INDEX 128
+
+
+/* Clock values used by the KryoFlux board */
+#define MCK_FREQ (((18432000 * 73) / 14) / 2)			// 48054857.14285
+#define SCK_FREQ (MCK_FREQ / 2)					// 24027428.5714
+#define ICK_FREQ (MCK_FREQ / 16)				// 3003428.5714
+#define SCK_PS_PER_TICK (1000000000/(SCK_FREQ/1000))		// 41619
+
+
+/*
+ * Scan the track data to build an array of all the indexes
+ * We need 2 passes :
+ *  - 1st pass search for OOB data starting with 0x0d02 and get the stream pos of each index
+ *  - 2nd pass stores the "file pos" for each index found at "stream pos"
+ * Having both positions allows to "seek" to any index in the track
+ *
+ * We need to have at least 2 indexes in the track data (to mark start and end of the dump
+ * for 1 revolution)
+ *
+ * Allocate an array of indexes and return the number of indexes found
+ * NOTE :
+ *  - there's a random number of flux before the 1st index that we must ignore, this is because
+ *    the KryoFlux board starts to dump as soon as it's ready, not necessarily on an index signal
+ *  - the last index will be nearly at the end of the track file, there will be no more data after that
+ *    (only a few flux transitions). This index marks the end of the previous revolution, we should
+ *    not go beyond as there will be no whole track.
+ *
+ * TODO : we don't correctly compute the index position in case it happens during a long
+ * region without flux transition at the end of a revolution
+ */
+
+static kfs_index *kfs_decode_index(unsigned char *dat, unsigned int datsz, int *p_index_count)
+{
+	unsigned int i, idx_i , stream_pos;
+	kfs_index *indexes_array = malloc((MAX_INDEX+1) * sizeof(kfs_index));
+	int pass;
+	unsigned int index_count;
+
+//fprintf ( stderr , "kfs_decode_index\n" );
+
+	index_count = 0;
+	for ( pass = 1 ; pass <= 2 ; pass++ )
+	{
+		idx_i = 0;
+		stream_pos = 0;
+		for (i = 0; i < datsz; )
+		{
+			if ( ( pass == 2 ) && ( idx_i < index_count )
+			  && ( stream_pos >= indexes_array[ idx_i ].stream_pos ) )
+			{
+//fprintf ( stderr , "kfs_decode_index pass 2 idx_i=%d file_pos=%d 0x%x stream_pos %d 0x%x sample_cnt=0x%x index_cnt=0x%x\n" , idx_i , i , i , indexes_array[ idx_i ].stream_pos , indexes_array[ idx_i ].stream_pos , indexes_array[ idx_i ].sample_counter , indexes_array[ idx_i ].index_counter );
+				indexes_array[ idx_i ].file_pos = i;	/* store 'i' as current pos in file */
+				idx_i++;
+			}
+
+			switch (dat[i]) {
+			case 0xd: /* oob */ {
+				uint32_t pos;
+				uint16_t sz = le_swap16(*(uint16_t *)&dat[i+2]);
+
+				i += 4;
+				pos = le_swap32(*(uint32_t *)&dat[i+0]);
+				if ( (dat[i-3] == 2) && ( pass == 1 ) )	/* index : store pos as stream_pos */
+				{
+					if (idx_i == MAX_INDEX)
+						goto fail;
+//fprintf ( stderr , "kfs_decode_index pass 1 idx_i=%d  i=%d 0x%x pos=%d 0x%x\n" , idx_i , i , i , pos, pos );
+					indexes_array[idx_i].stream_pos = pos;
+					indexes_array[idx_i].sample_counter = le_swap32(*(uint32_t *)&dat[i+4]);
+					indexes_array[idx_i].index_counter = le_swap32(*(uint32_t *)&dat[i+8]);
+					idx_i++;
+				}
+				i += sz;
+				break;
+			}
+			case 0xa: /* nop3 */
+			case 0xc: /* value16 */
+				i +=3; stream_pos +=3;
+				break;
+			case 0x00: case 0x01: case 0x02: case 0x03:
+			case 0x04: case 0x05: case 0x06: case 0x07:
+			case 0x9: /* nop2 */
+				i +=2; stream_pos +=2;
+				break;
+			case 0x8: /* nop1 */
+			case 0xb: /* overflow16 */
+			default: /* 1-byte sample */
+				i++; stream_pos++;
+				break;
+			}
+		}
+
+		if ( pass == 1 )
+		{
+			if ( idx_i <= 1 )			/* no index or only one : abort */
+				goto fail;
+			else
+				index_count = idx_i;
+		}
+	}
+
+//fprintf ( stderr , "kfs_decode_index index_count=%d\n" , index_count );
+	*p_index_count = index_count;
+	return indexes_array;
+
+fail:
+	free(indexes_array);
+	*p_index_count = 0;
+	return NULL;
+}
+
+
+static int kfs_select_track(struct mfm_stream *s, unsigned int tracknr)
+{
+	struct kfs_stream *kfss = s->type.flux_struct_param;
+
+//fprintf ( stderr , "kfs_select_track 1 tr=%d\n" , tracknr );
+
+	if (kfss->dat && (kfss->track == tracknr))
+		return 0;
+
+//fprintf ( stderr , "kfs_select_track 2\n" );
+
+	if ( kfss->indexes_array )
+		free(kfss->indexes_array);
+	kfss->indexes_array = NULL;
+
+
+	kfss->dat = KFS_State.TracksImage[ kfss->Drive ][ tracknr >> 1 ][ tracknr & 1 ].TrackData;
+	kfss->datsz = KFS_State.TracksImage[ kfss->Drive ][ tracknr >> 1 ][ tracknr & 1 ].TrackSize;;
+
+	if ( kfss->dat == NULL )
+		return -1;					/* No flux data for this track */
+
+	kfss->track = tracknr;
+
+	kfss->indexes_array = kfs_decode_index ( kfss->dat, kfss->datsz, &(kfss->index_count) );
+	if (kfss->indexes_array == NULL) {
+		kfss->dat = NULL;
+		return -1;
+	}
+
+	s->max_revolutions = ~0u;
+	s->RevolutionsNbr = kfss->index_count-1;
+	return 0;
+}
+
+
+static void kfs_reset(struct mfm_stream *s)
+{
+	struct kfs_stream *kfss = s->type.flux_struct_param;
+
+	/* special case for the 1st call of kfs_next_flux : we set idx_i=-1/
+	 * and stream_next_index = stream_pos to trigger an index signal
+	 * at the start of the 1st revolution
+	 */
+	kfss->idx_i = -1;
+	kfss->dat_idx = 0;
+	kfss->stream_idx = 0;
+	if ( kfss->indexes_array )			/* indexes already decoded ? */
+	{
+		kfss->dat_idx = kfss->indexes_array [ 0 ].file_pos;
+		kfss->stream_idx = kfss->indexes_array [ 0 ].stream_pos;
+		kfss->stream_next_index = kfss->indexes_array [ 0 ].stream_pos;
+	}
+}
+
+
+static int kfs_next_flux(struct mfm_stream *s)
+{
+	struct kfs_stream *kfss = s->type.flux_struct_param;
+	unsigned int i = kfss->dat_idx;
+	unsigned char *dat = kfss->dat;
+	uint32_t val = 0;
+	bool done = 0;
+
+//fprintf ( stderr , "kfs_next_flux i=%d stream_idx=%d stream_next_index=%d idx_i=%d\n", i, kfss->stream_idx, kfss->stream_next_index, kfss->idx_i);
+
+	while (!done && (i < kfss->datsz))
+	{
+		/* did we reach an index ? */
+		if ( kfss->stream_idx >= kfss->stream_next_index )
+		{
+			s->ns_to_index = s->flux;
+			kfss->idx_i++;
+			if ( kfss->idx_i >= kfss->index_count-1 )	/* last index ? */
+			{
+				kfss->idx_i = 0;			/* continue at 1st index */
+				i = kfss->indexes_array [ 0 ].file_pos;
+				kfss->stream_idx = kfss->indexes_array [ 0 ].stream_pos;
+			}
+
+			kfss->stream_next_index = kfss->indexes_array [ kfss->idx_i+1 ].stream_pos;
+//fprintf ( stderr , "kfs_next_flux new index i=%d stream_idx=%d idx_i=%d\n", i, kfss->stream_idx, kfss->idx_i);
+		}
+
+		switch (dat[i]) {
+		case 0x00: case 0x01: case 0x02: case 0x03:
+		case 0x04: case 0x05: case 0x06: case 0x07:
+		two_byte_sample:
+			val += ((uint32_t)dat[i] << 8) + dat[i+1];
+			i += 2; kfss->stream_idx += 2;
+			done = 1;
+			break;
+		case 0x8: /* nop1 */
+			i += 1; kfss->stream_idx += 1;
+			break;
+		case 0x9: /* nop2 */
+			i += 2; kfss->stream_idx += 2;
+			break;
+		case 0xa: /* nop3 */
+			i += 3; kfss->stream_idx += 3;
+			break;
+		case 0xb: /* overflow16 */
+			val += 0x10000;
+			i += 1; kfss->stream_idx += 1;
+			break;
+		case 0xc: /* value16 */
+			i += 1; kfss->stream_idx += 1;
+			goto two_byte_sample;
+		case 0xd: /* oob */ {
+			uint32_t pos;
+			uint16_t sz = le_swap16(*(uint16_t *)&dat[i+2]);
+			i += 4;
+			pos = le_swap32(*(uint32_t *)&dat[i+0]);
+			switch (dat[i-3]) {
+			case 0x1: /* stream read */
+			case 0x3: /* stream end */
+				if (pos != kfss->stream_idx)
+					fprintf (stderr, "Out-of-sync during track read\n");
+				break;
+			case 0x2: /* index */
+				break;
+			case 0xd: /* eof */
+				i = kfss->datsz;
+				sz = 0;
+				break;
+			}
+			i += sz;
+			break;
+		}
+		default: /* 1-byte sample */
+			val += dat[i];
+			i += 1; kfss->stream_idx += 1;
+			done = 1;
+			break;
+		}
+	}
+
+	kfss->dat_idx = i;
+
+	if (!done)
+		return -1;
+
+//fprintf ( stderr , "kfs_next_flux i=%d val=%d %d\n" , i , val , SCK_PS_PER_TICK );
+	val = (val * (uint64_t)SCK_PS_PER_TICK) / 1000u;
+//    val = (val * s->drive_rpm) / s->data_rpm;
+	s->flux += val;
+//fprintf ( stderr , "kfs_next_flux i=%d flux=%d val=%d\n" , i , s->flux , val );
+	return val;
+}
+
+
+/*
+ * Flux to MFM bit decoding - Support for Kryoflux raw stream disk image - END
+ */
+
+
+
+
+int	FDC_GetBytesPerTrack_KFS ( uint8_t Drive , uint8_t Track , uint8_t Side )
+{
+	return 6268;			// TODO see FDC_TRACK_BYTES_STANDARD
+}
+
+
+
+uint32_t	FDC_GetCyclesPerRev_FdcCycles_KFS ( uint8_t Drive , uint8_t Track , uint8_t Side )
+{
+	int			TrackSize;
+
+	TrackSize = FDC_GetBytesPerTrack_KFS ( Drive , Track , Side );
+
+	// TODO : use a common function FDC_GetCyclesPerRev_FdcCycles ( ... , tracksize )
+//	return TrackSize * FDC_DELAY_CYCLE_MFM_BYTE / FDC_GetFloppyDensity ( Drive );	/* Take density into account for HD/ED floppies */;
+	return TrackSize * 256 / FDC_GetFloppyDensity ( Drive );	/* Take density into account for HD/ED floppies */;
+}
+

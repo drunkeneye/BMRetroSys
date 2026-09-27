@@ -473,6 +473,10 @@ void circle_present_fbl(uint32_t ready_mask, int sync) {
   static_kernel->circle_present_fbl(ready_mask, sync);
 }
 
+void circle_set_mailbox_fbl(int layer, int enable) {
+  static_kernel->circle_set_mailbox_fbl(layer, enable);
+}
+
 int circle_get_last_present_timing(struct circle_present_timing *timing) {
   return static_kernel->circle_get_last_present_timing(timing);
 }
@@ -3722,6 +3726,14 @@ void CKernel::circle_set_halign_fbl(int layer, int align, int padding) {
   }
 #endif
   fbl[layer].SetHorizontalAlignment(align, padding);
+}
+
+void CKernel::circle_set_mailbox_fbl(int layer, int enable) {
+  // Plain bool write, no display call to dispatch: safe on any core.
+  // Range-checked like the other setters (fbl[] indexed by layer).
+  if (layer >= 0 && layer < FB_NUM_LAYERS) {
+    fbl[layer].SetMailbox(enable != 0);
+  }
 }
 
 void CKernel::circle_set_padding_fbl(int layer, double lpad, double rpad, double tpad, double bpad) {

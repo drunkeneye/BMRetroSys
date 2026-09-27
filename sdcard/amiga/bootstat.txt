@@ -1,0 +1,2 @@
+# Amiga bootstat placeholder (no boot-time ROM files to check; Kickstart
+# comes from /kick with a compiled-in DiagROM fallback).

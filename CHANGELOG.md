@@ -1,6 +1,20 @@
+Version 0.2 (2026-09-27)
+------------------
+* New: product rename BMX8bit → BMRetroSys (About, logs, SD paths,
+  docs; C identifiers unchanged).
+* New: Atari ST (Hatari core, EmuTOS + genuine TOS selector with
+  MegaSTE switching), Amiga (vAmiga: models/chipset/memory/sound
+  options, DF0–DF3, HDF, snapshots, warp, drive clicks), DOSBox-X.
+* New: HATARI → ATARIST and DOSBOX → DOS naming across menus,
+  kernels, settings and SD layout.
+* New: `systems/<machine>/…` content layout, `roms/…` firmware pools,
+  archive.org Kickstart/TOS fetching, single-machine stage script.
+* Fix: Amiga video init (half-height squeeze), Paula audio drain
+  pacing, warp toggle/UI sync.
+
 Version 0.1 (2026-09-20)
 ------------------
-First BMX8bit release: BMX at commit `81efb7e` (public export 2026.08.19)
+First BMRetroSys release: BMX at commit `81efb7e` (public export 2026.08.19)
 plus the Atari 8-bit port. Upstream history lives on in
 [`CHANGELOG_BMX.md`](CHANGELOG_BMX.md).
 
@@ -38,8 +52,8 @@ plus the Atari 8-bit port. Upstream history lives on in
   Windows paths, data descriptors, flag/country quirks), single-pass
   CRC-verified extraction with progress bar and ESC cancel, sorted
   dirs-first listings with type-ahead.
-* New: BMX8bit branding (About shows `BMX8bit 0.1`, project
-  `https://github.com/drunkeneye/BMX8bit` next to the kept
+* New: BMRetroSys branding (About shows `BMRetroSys 0.1`, project
+  `https://github.com/drunkeneye/BMRetroSys` next to the kept
   `https://github.com/kdre/bmx`), `Autostart...` label, Atari-cleaned
   Sound/Keyboard menus (no SID, no CBM hotkeys, no mapping editor).
 * Infra: build-identity stamps rebuilt on every build (About + debug

@@ -182,7 +182,9 @@ fi
 # build last touched those files and misidentify the kernel. Touching them
 # recompiles exactly two TUs per variant.
 touch "$SRC_DIR/third_party/common/menu.c" \
-      "$SRC_DIR/src/atari800/atari800_debug.cpp"
+      "$SRC_DIR/src/atari800/atari800_debug.cpp" \
+      "$SRC_DIR/src/atarist/atarist_debug.cpp" \
+      "$SRC_DIR/src/amiga/amiga_debug.cpp"
 build_vice310_machines "${BMX_PI5_MACHINES[@]}"
 if [ "$BUILD_ONLY" -eq 0 ]; then
   if [ "$DOWNLOAD_ROMS" -eq 1 ]; then

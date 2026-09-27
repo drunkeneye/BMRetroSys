@@ -1,0 +1,70 @@
+//
+// bmx-shim/thread -- single-threaded <thread> for the bare-metal toolchain.
+//
+// Threads are never created on BMX (the vAmiga emulator thread is never
+// launched; transports are never started). std::thread therefore never runs
+// anything; the single fake id makes isEmulatorThread() true, which matches
+// the bare-metal reality (the only thread IS the emulator thread).
+//
+
+#ifndef BMX_VAMIGA_THREAD
+#define BMX_VAMIGA_THREAD
+
+#include <chrono>
+
+namespace std {
+
+class thread {
+ public:
+  class id {
+    long v = 1;
+
+   public:
+    id() noexcept {}
+    explicit id(long x) noexcept : v(x) {}
+    bool operator==(const id &o) const noexcept { return v == o.v; }
+    bool operator!=(const id &o) const noexcept { return v != o.v; }
+    bool operator<(const id &o) const noexcept { return v < o.v; }
+    bool operator<=(const id &o) const noexcept { return v <= o.v; }
+    bool operator>(const id &o) const noexcept { return v > o.v; }
+    bool operator>=(const id &o) const noexcept { return v >= o.v; }
+    long raw() const noexcept { return v; }
+  };
+
+  typedef void *native_handle_type;
+
+  thread() noexcept {}
+  // NOTE: intentionally does NOT run the function (no threads on BMX).
+  template <class F, class... Args>
+  explicit thread(F &&, Args &&...) {}
+  ~thread() {}
+  thread(const thread &) = delete;
+  thread(thread &&) noexcept {}
+  thread &operator=(const thread &) = delete;
+  thread &operator=(thread &&) noexcept { return *this; }
+  bool joinable() const noexcept { return false; }
+  void join() {}
+  void detach() {}
+  id get_id() const noexcept { return id(); }
+  native_handle_type native_handle() { return nullptr; }
+  static unsigned hardware_concurrency() noexcept { return 1; }
+};
+
+inline void swap(thread &, thread &) noexcept {}
+
+namespace this_thread {
+
+inline thread::id get_id() noexcept { return thread::id(); }
+inline void yield() noexcept {}
+
+template <class Rep, class Period>
+void sleep_for(const chrono::duration<Rep, Period> &) {}
+
+template <class Clock, class Duration>
+void sleep_until(const chrono::time_point<Clock, Duration> &) {}
+
+}  // namespace this_thread
+
+}  // namespace std
+
+#endif  // BMX_VAMIGA_THREAD

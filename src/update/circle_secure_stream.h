@@ -33,6 +33,13 @@ bool RemainingDeadlineMilliseconds(const MonotonicDeadline &deadline,
 bool EnsureCertificateClockAtLeast(uint64_t trusted_epoch,
                                    char *error, size_t error_size);
 
+// Numeric transport override for one hostname (DNS fallback): SNI and
+// certificate verification keep using the hostname, but TCP connects to
+// the given numeric IPv4 address. Unset by default; the updater never
+// sets it, so updater behavior is unchanged.
+void SetVerifiedConnectionOverride(const char *host, const char *numeric_ip);
+void ClearVerifiedConnectionOverride(void);
+
 class CircleSecureStreamFactory : public SecureStreamFactory {
  public:
     CircleSecureStreamFactory(CNetSubSystem *network,

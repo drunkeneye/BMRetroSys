@@ -1,0 +1,16 @@
+#
+# Makefile for an ATARIST kernel using BMX
+#
+# The Hatari core is vendored under third_party/hatari in Phase 1; the
+# Phase 0 placeholder compiles from src/atarist only.  This file only selects
+# the machine class and lets the main Makefile do the rest.
+#
+
+MACHINE_CLASS = RASPI_ATARIST
+
+# For now run the atarist frame loop on core 1 like the other machines.
+BMX_EMU_MULTICORE ?= 1
+
+VICELIBS :=
+
+include Makefile

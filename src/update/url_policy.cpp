@@ -64,7 +64,20 @@ bool IsAuthorizedRedirectHost(const char *host) {
     return StringEquals(host, "github.com") ||
            StringEquals(host, "release-assets.githubusercontent.com") ||
            StringEquals(host, "objects.githubusercontent.com") ||
-           StringEquals(host, "github-releases.githubusercontent.com");
+           StringEquals(host, "github-releases.githubusercontent.com") ||
+           StringEquals(host, "www.atarimania.com") ||
+           StringEquals(host, "atarimania.com");
+}
+
+// Prefix allowlist for Atarimania requests: machine search/list pages,
+// production detail pages, dump files, and the homepage (used by the
+// connection test).
+static bool IsAtarimaniaPath(const char *path_and_query) {
+    return StartsWith(path_and_query, "/") &&
+           (path_and_query[1] == '\0' || path_and_query[1] == '?' ||
+            StartsWith(path_and_query, "/machines/") ||
+            StartsWith(path_and_query, "/games/") ||
+            StartsWith(path_and_query, "/8bit/dumps/"));
 }
 
 UrlPolicyStatus ParseAndAuthorizeUpdateUrl(const char *url,
@@ -136,7 +149,10 @@ UrlPolicyStatus ParseAndAuthorizeUpdateUrl(const char *url,
     memcpy(parsed->path_and_query, path, path_length + 1U);
 
     const char *query = strchr(parsed->path_and_query, '?');
-    if (purpose != UpdateUrlPurpose::Redirect && query != 0) {
+    // Atarimania search parameters travel in the query string; every other
+    // non-redirect purpose forbids it.
+    if (purpose != UpdateUrlPurpose::Redirect &&
+        purpose != UpdateUrlPurpose::Atarimania && query != 0) {
         return UrlPolicyStatus::QueryForbidden;
     }
 
@@ -187,6 +203,18 @@ UrlPolicyStatus ParseAndAuthorizeUpdateUrl(const char *url,
         return StringEquals(parsed->path_and_query, "/login/device/code") ||
                        StringEquals(parsed->path_and_query,
                                     "/login/oauth/access_token")
+                   ? UrlPolicyStatus::Ok
+                   : UrlPolicyStatus::PathNotAllowed;
+    }
+
+    if (purpose == UpdateUrlPurpose::Atarimania) {
+        if (!StringEquals(parsed->host, "www.atarimania.com") &&
+            !StringEquals(parsed->host, "atarimania.com")) {
+            return UrlPolicyStatus::HostNotAllowed;
+        }
+        // Query strings carry the search parameters; anything else was
+        // validated structurally above.
+        return IsAtarimaniaPath(parsed->path_and_query)
                    ? UrlPolicyStatus::Ok
                    : UrlPolicyStatus::PathNotAllowed;
     }

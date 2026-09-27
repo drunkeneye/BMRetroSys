@@ -1,0 +1,28 @@
+//
+// bmx-shim/latch -- single-threaded <latch>. Trivially satisfied.
+//
+
+#ifndef BMX_VAMIGA_LATCH
+#define BMX_VAMIGA_LATCH
+
+#include <cstddef>
+
+namespace std {
+
+class latch {
+  ptrdiff_t counter;
+
+ public:
+  explicit latch(ptrdiff_t expected) : counter(expected) {}
+  ~latch() {}
+  latch(const latch &) = delete;
+  latch &operator=(const latch &) = delete;
+  void count_down(ptrdiff_t n = 1) { counter -= n; }
+  bool try_wait() const noexcept { return counter <= 0; }
+  void wait() const {}
+  void arrive_and_wait(ptrdiff_t n = 1) { const_cast<latch *>(this)->count_down(n); }
+};
+
+}  // namespace std
+
+#endif  // BMX_VAMIGA_LATCH

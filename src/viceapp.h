@@ -59,6 +59,12 @@
 #include "update/update_service.h"
 #if defined(RASPI_ATARI800)
 #include "atari800/atari800_emulator_core.h"
+#elif defined(RASPI_DOS)
+#include "dos/dos_emulator_core.h"
+#elif defined(RASPI_ATARIST)
+#include "atarist/atarist_emulator_core.h"
+#elif defined(RASPI_AMIGA)
+#include "amiga/amiga_emulator_core.h"
 #else
 #include "viceemulatorcore.h"
 #endif
@@ -219,6 +225,12 @@ extern "C" {
 void circle_fs_ready();
 }
 
+// In-memory BMX boot timeline recorded by EmitBootTrace (viceapp.cpp).
+// Labels are static strings; ticks are CTimer microseconds since power-on.
+int BmxBootMarkCount(void);
+const char *BmxBootMarkLabel(int index);
+unsigned BmxBootMarkTicks(int index);
+
 class ViceApp {
 public:
   enum TShutdownMode { ShutdownNone, ShutdownHalt, ShutdownReboot };
@@ -307,6 +319,15 @@ public:
      mEmulatorCore =
 #if defined(RASPI_ATARI800)
          new Atari800EmulatorCore(&mMemory, circle_cycles_per_second());
+#elif defined(RASPI_DOS)
+         new bmx::dos::DosboxxEmulatorCore(&mMemory,
+                                              circle_cycles_per_second());
+#elif defined(RASPI_ATARIST)
+         new bmx::atarist::AtariSTEmulatorCore(&mMemory,
+                                             circle_cycles_per_second());
+#elif defined(RASPI_AMIGA)
+         new bmx::amiga::AmigaEmulatorCore(&mMemory,
+                                           circle_cycles_per_second());
 #else
          new ViceEmulatorCore(&mMemory, circle_cycles_per_second());
 #endif

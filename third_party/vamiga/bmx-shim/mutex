@@ -1,0 +1,154 @@
+//
+// bmx-shim/mutex -- single-threaded <mutex> for the bare-metal toolchain.
+//
+// The Arm GNU bare-metal libstdc++ is built --disable-threads, so
+// std::mutex / std::recursive_mutex / std::lock_guard / std::unique_lock do
+// not exist. vAmiga is driven single-threaded on BMX (the emulator thread
+// is never launched), so these are correct no-op implementations. Found
+// via -I ordering before the (empty) system header.
+//
+
+#ifndef BMX_VAMIGA_MUTEX
+#define BMX_VAMIGA_MUTEX
+
+namespace std {
+
+class mutex {
+ public:
+  mutex() noexcept {}
+  ~mutex() {}
+  mutex(const mutex &) = delete;
+  mutex &operator=(const mutex &) = delete;
+  void lock() noexcept {}
+  bool try_lock() noexcept { return true; }
+  void unlock() noexcept {}
+  typedef void *native_handle_type;
+  native_handle_type native_handle() noexcept { return nullptr; }
+};
+
+class recursive_mutex {
+  int count = 0;
+
+ public:
+  recursive_mutex() noexcept {}
+  ~recursive_mutex() {}
+  recursive_mutex(const recursive_mutex &) = delete;
+  recursive_mutex &operator=(const recursive_mutex &) = delete;
+  void lock() noexcept { count++; }
+  bool try_lock() noexcept {
+    count++;
+    return true;
+  }
+  void unlock() noexcept {
+    if (count > 0) {
+      count--;
+    }
+  }
+  typedef void *native_handle_type;
+  native_handle_type native_handle() noexcept { return nullptr; }
+};
+
+struct defer_lock_t {
+  explicit defer_lock_t() = default;
+};
+struct try_to_lock_t {
+  explicit try_to_lock_t() = default;
+};
+struct adopt_lock_t {
+  explicit adopt_lock_t() = default;
+};
+constexpr defer_lock_t defer_lock{};
+constexpr try_to_lock_t try_to_lock{};
+constexpr adopt_lock_t adopt_lock{};
+
+template <class Mutex>
+class lock_guard {
+  Mutex &m;
+
+ public:
+  typedef Mutex mutex_type;
+  explicit lock_guard(Mutex &mx) : m(mx) { m.lock(); }
+  lock_guard(Mutex &mx, adopt_lock_t) : m(mx) {}
+  ~lock_guard() { m.unlock(); }
+  lock_guard(const lock_guard &) = delete;
+  lock_guard &operator=(const lock_guard &) = delete;
+};
+
+template <class Mutex>
+class unique_lock {
+  Mutex *m = nullptr;
+  bool owns = false;
+
+ public:
+  typedef Mutex mutex_type;
+  unique_lock() noexcept {}
+  explicit unique_lock(Mutex &mx) : m(&mx), owns(true) { m->lock(); }
+  unique_lock(Mutex &mx, defer_lock_t) noexcept : m(&mx), owns(false) {}
+  unique_lock(Mutex &mx, try_to_lock_t) : m(&mx), owns(mx.try_lock()) {}
+  unique_lock(Mutex &mx, adopt_lock_t) noexcept : m(&mx), owns(true) {}
+  ~unique_lock() {
+    if (owns && m != nullptr) {
+      m->unlock();
+    }
+  }
+  unique_lock(const unique_lock &) = delete;
+  unique_lock &operator=(const unique_lock &) = delete;
+  unique_lock(unique_lock &&o) noexcept : m(o.m), owns(o.owns) {
+    o.m = nullptr;
+    o.owns = false;
+  }
+  unique_lock &operator=(unique_lock &&o) noexcept {
+    if (owns && m != nullptr) {
+      m->unlock();
+    }
+    m = o.m;
+    owns = o.owns;
+    o.m = nullptr;
+    o.owns = false;
+    return *this;
+  }
+  void lock() {
+    if (m != nullptr && !owns) {
+      m->lock();
+      owns = true;
+    }
+  }
+  bool try_lock() {
+    if (m != nullptr && !owns) {
+      owns = m->try_lock();
+    }
+    return owns;
+  }
+  void unlock() {
+    if (owns && m != nullptr) {
+      m->unlock();
+      owns = false;
+    }
+  }
+  bool owns_lock() const noexcept { return owns; }
+  explicit operator bool() const noexcept { return owns; }
+  Mutex *mutex() const noexcept { return m; }
+  Mutex *release() noexcept {
+    Mutex *r = m;
+    m = nullptr;
+    owns = false;
+    return r;
+  }
+  void swap(unique_lock &o) noexcept {
+    Mutex *tm = m;
+    m = o.m;
+    o.m = tm;
+    bool to = owns;
+    owns = o.owns;
+    o.owns = to;
+  }
+};
+
+template <class Mutex>
+void swap(unique_lock<Mutex> &a, unique_lock<Mutex> &b) noexcept {
+  a.swap(b);
+}
+
+}  // namespace std
+
+#endif  // BMX_VAMIGA_MUTEX

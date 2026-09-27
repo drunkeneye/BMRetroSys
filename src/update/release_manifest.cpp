@@ -687,7 +687,7 @@ ManifestParseStatus Parser::ParseFiles(int index, bool store,
         required_config = required_config || strcmp(parsed.path, "config.txt") == 0;
         has_tryboot = has_tryboot || strcmp(parsed.path, "tryboot.txt") == 0;
         required_active_selector = required_active_selector ||
-            strcmp(parsed.path, "bmx-active-kernel.txt") == 0;
+            strcmp(parsed.path, "bmretrosys-active-kernel.txt") == 0;
         has_candidate_selector = has_candidate_selector ||
             strcmp(parsed.path, "bmx-tryboot-kernel.txt") == 0;
         if (store) storage_.files[i] = parsed;

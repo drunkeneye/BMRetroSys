@@ -596,6 +596,25 @@ vice310_machine_config() {
       VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-ATARI800-310
       VICE310_CLASS=RASPI_ATARI800; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
       VICE310_IMAGE_SUFFIX=atari800; VICE310_COPY_DEFAULT=1 ;;
+    dos)
+      # dos compiles directly like atari800 (src/dos only, no VICE
+      # target or arch archive to build or link). Not the fallback default:
+      # images/kernel8.img must stay byte-identical to the Atari800 kernel.
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-DOS-310
+      VICE310_CLASS=RASPI_DOS; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=dos; VICE310_COPY_DEFAULT=0 ;;
+    atarist)
+      # atarist compiles directly like atari800/dos (src/atarist only in
+      # Phase 0, vendored core in Phase 1; no VICE target or arch archive).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-ATARIST-310
+      VICE310_CLASS=RASPI_ATARIST; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=atarist; VICE310_COPY_DEFAULT=0 ;;
+    amiga)
+      # amiga compiles directly (src/amiga glue + vendored
+      # third_party/vamiga/Core; no VICE target or arch archive).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-AMIGA-310
+      VICE310_CLASS=RASPI_AMIGA; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=amiga; VICE310_COPY_DEFAULT=0 ;;
     *) echo "unsupported VICE 3.10 machine: $machine" >&2; return 1 ;;
   esac
 }

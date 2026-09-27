@@ -161,6 +161,11 @@ void Atari800EmulatorCore::RunFrameLoop(void) {
     unsigned long t0 = CTimer::GetClockTicks();
     int result = libatari800_next_frame(&input);
     unsigned long t1 = CTimer::GetClockTicks();
+    if (frame_count == 0) {
+      bmx::atari800::debug_log("boot timeline: first frame done %lu us "
+                               "(%.2f s since power-on)",
+                               t1, (double)t1 * 1e-6);
+    }
     if (trace) {
       bmx::atari800::debug_log("Atari800 frame %lu: next_frame exit result=%d",
                                frame_count, result);

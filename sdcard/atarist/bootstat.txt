@@ -1,0 +1,7 @@
+# This file tells stdio glue code to fast fail, fast stat certain files
+# that are accessed at boot time in order to speed up the boot process.
+#
+# Hatari is self-contained in Phase 0 (placeholder, no external TOS needed),
+# so this list stays empty: an empty list means no faked stat/open results,
+# so the core sees the real SD card. Optional files from ROMS.txt need no
+# entries here.

@@ -982,6 +982,16 @@ void FrameBufferLayer::SetUsesShader(bool enabled) {
   uses_shader_ = enabled;
 }
 
+// Legacy display path: mailbox flag stored, no fence to skip (the legacy
+// dispmanx submit only syncs on explicit sync requests).
+void FrameBufferLayer::SetMailbox(bool enable) {
+  mailbox_ = enable;
+}
+
+bool FrameBufferLayer::Mailbox() const {
+  return mailbox_;
+}
+
 void FrameBufferLayer::SetShaderParams(
     const struct bmx_crt_effect_params &params) {
   if (uses_shader_) {

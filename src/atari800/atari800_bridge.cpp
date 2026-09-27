@@ -529,7 +529,7 @@ bool basic_preference_loaded(void) {
 }
 
 // Clamps all persisted ROM version preferences against actually available
-// images. Called from config_init after the /roms scan so a deleted file
+// images. Called from config_init after the ROM pool scan so a deleted file
 // can never black-screen the boot.
 void clamp_all_rom_prefs(void) {
   for (int m = 0; m < Atari800_MACHINE_SIZE; m++) {
@@ -910,7 +910,36 @@ int emux_attach_cart(int bank, char *filename) {
       r == CARTRIDGE_TOO_FEW_DATA) {
     return -1;
   }
-  return 0;
+  if (r == CARTRIDGE_BAD_CHECKSUM) {
+    return 0;  // mounted with warning; keep historic <0-means-fail shape
+  }
+  // 0 = recognized, positive = size in KB with type UNKNOWN (the menu
+  // asks the user to pick a type, like the desktop TUI).
+  return r;
+}
+
+// Cartridge types whose size matches kb (for the unknown-type menu).
+// Fills up to max (id, description) pairs; returns the count.
+int emux_atari_cart_types_for_kb(int kb, int *ids, const char **descs,
+                                 int max) {
+  int n = 0;
+  if (ids == NULL || descs == NULL || max <= 0) {
+    return 0;
+  }
+  for (int id = 1; id < CARTRIDGE_TYPE_COUNT && n < max; id++) {
+    if (CARTRIDGES[id].kb == kb) {
+      ids[n] = id;
+      descs[n] = CARTRIDGES[id].description;
+      n++;
+    }
+  }
+  return n;
+}
+
+void emux_atari_set_cart_type(int type) {
+  if (type > 0 && type < CARTRIDGE_TYPE_COUNT) {
+    CARTRIDGE_SetTypeAutoReboot(&CARTRIDGE_main, type);
+  }
 }
 
 void emux_detach_cart(int bank) {
@@ -1427,7 +1456,7 @@ void emux_add_machine_options(struct menu_item *parent) {
   ui_menu_add_button(MENU_ATARI_CPUSTATE, parent, "Log CPU state");
 
   struct menu_item *roms = ui_menu_add_folder(parent, "System ROMs");
-  ui_menu_add_button(MENU_ATARI_ROM_RESCAN, roms, "Scan /roms for ROMs");
+  ui_menu_add_button(MENU_ATARI_ROM_RESCAN, roms, "Scan ROMs (/roms/ATARI800)");
   bmx::atari800::s_os_item = NULL;
   bmx::atari800::s_basic_item = NULL;
   child = bmx::atari800::s_os_item =
@@ -2173,9 +2202,9 @@ int emux_handle_menu_change(struct menu_item *item) {
     // Auto-named BMP dump of the emulator frame (same volume preference
     // as snapshot saves: USB stick first, then SD system volume).
     static const char *kShotDirs[] = {
-        "USER:/snapshots/ATARI800",
-        "SYS:/snapshots/ATARI800",
-        "SD:/snapshots/ATARI800",
+        "USER:/systems/ATARI800/snapshots",
+        "SYS:/systems/ATARI800/snapshots",
+        "SD:/systems/ATARI800/snapshots",
     };
     char path[64];
     bool saved = false;

@@ -54,6 +54,14 @@ int __attribute__((weak)) emux_save_reu_image(char *filename) {
   return -1;
 }
 
+// Amiga hardfiles (HD0/HD1). Only the Amiga bridge implements this;
+// all other machines keep the weak stub.
+int __attribute__((weak)) emux_attach_hdf_image(int drive, char *filename) {
+  (void)drive;
+  (void)filename;
+  return -1;
+}
+
 // Ring buffer for key latch events
 struct pending_emu_key_s pending_emu_key;
 

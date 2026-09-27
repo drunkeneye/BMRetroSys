@@ -3261,6 +3261,19 @@ int emux_atari_mount_disk(int drive, char *path) {
 void emux_atari_sync_drives(void) {
 }
 
+int emux_atari_cart_types_for_kb(int kb, int *ids, const char **descs,
+                                 int max) {
+  (void)kb;
+  (void)ids;
+  (void)descs;
+  (void)max;
+  return 0;
+}
+
+void emux_atari_set_cart_type(int type) {
+  (void)type;
+}
+
 int emux_atari_save_set(char *path) {
   (void)path;
   return -1;

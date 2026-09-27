@@ -19,7 +19,7 @@ static const size_t kBuildInfoTokenCapacity = 512U;
 static const char kConfigBeginMarker[] = "# BEGIN BMX MANAGED";
 static const char kConfigEndMarker[] = "# END BMX MANAGED";
 static const char kActiveKernelSelectorInclude[] =
-    "include bmx-active-kernel.txt";
+    "include bmretrosys-active-kernel.txt";
 static const char kTextSchemaPrefix[] = "# BMX-SCHEMA ";
 
 struct Slice {

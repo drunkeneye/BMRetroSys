@@ -14,12 +14,12 @@ namespace bmx {
 namespace remote {
 namespace {
 
-const char kDeveloperPrefix[] = "/bmx/dev/v1";
-const char kFilePrefix[] = "/bmx/dev/v1/fs/";
-const char kDirectoryPrefix[] = "/bmx/dev/v1/directory/";
-const char kV3dReviewPath[] = "/bmx/dev/v1/v3d-review";
+const char kDeveloperPrefix[] = "/bmretrosys/dev/v1";
+const char kFilePrefix[] = "/bmretrosys/dev/v1/fs/";
+const char kDirectoryPrefix[] = "/bmretrosys/dev/v1/directory/";
+const char kV3dReviewPath[] = "/bmretrosys/dev/v1/v3d-review";
 const char kV3dReviewScreenshotPath[] =
-    "/bmx/dev/v1/v3d-review/screenshot.ppm";
+    "/bmretrosys/dev/v1/v3d-review/screenshot.ppm";
 
 void CloseDeveloperFileVolume(
     void *context, bmx::update::UpdateFileSystem *file_system)
@@ -519,9 +519,9 @@ void DeveloperRouter::Route(const HttpRequestHead &request,
         RespondJsonError(403U, "{\"error\":\"forbidden\"}\n", result);
         return;
     }
-    if (ExactPath(request.raw_path, "/bmx/dev/v1/status")) {
+    if (ExactPath(request.raw_path, "/bmretrosys/dev/v1/status")) {
         RouteStatus(request, result);
-    } else if (ExactPath(request.raw_path, "/bmx/dev/v1/memory")) {
+    } else if (ExactPath(request.raw_path, "/bmretrosys/dev/v1/memory")) {
         RouteMemory(request, result);
     } else if (HttpStringStartsWith(request.raw_path,
                                     HttpString(kFilePrefix))) {
@@ -529,21 +529,21 @@ void DeveloperRouter::Route(const HttpRequestHead &request,
     } else if (HttpStringStartsWith(request.raw_path,
                                     HttpString(kDirectoryPrefix))) {
         RouteDirectory(request, result);
-    } else if (ExactPath(request.raw_path, "/bmx/dev/v1/reboot")) {
+    } else if (ExactPath(request.raw_path, "/bmretrosys/dev/v1/reboot")) {
         RouteReboot(request, result);
-    } else if (ExactPath(request.raw_path, "/bmx/dev/v1/logs")) {
+    } else if (ExactPath(request.raw_path, "/bmretrosys/dev/v1/logs")) {
         RouteLogs(request, result);
     } else if (ExactPath(request.raw_path,
-                         "/bmx/dev/v1/diagnostics/usb/devices")) {
+                         "/bmretrosys/dev/v1/diagnostics/usb/devices")) {
         RouteUsbDevices(request, result);
     } else if (ExactPath(request.raw_path,
-                         "/bmx/dev/v1/diagnostics/usb/status")) {
+                         "/bmretrosys/dev/v1/diagnostics/usb/status")) {
         RouteUsbStatus(request, result);
     } else if (ExactPath(request.raw_path,
-                         "/bmx/dev/v1/diagnostics/usb/start")) {
+                         "/bmretrosys/dev/v1/diagnostics/usb/start")) {
         RouteUsbStart(request, result);
     } else if (ExactPath(request.raw_path,
-                         "/bmx/dev/v1/diagnostics/usb/stop")) {
+                         "/bmretrosys/dev/v1/diagnostics/usb/stop")) {
         RouteUsbStop(request, result);
     } else if (ExactPath(request.raw_path, kV3dReviewScreenshotPath)) {
         RouteV3dReviewScreenshot(request, result);

@@ -93,9 +93,9 @@ if [ -z "$STAGE_DIR" ]; then
 fi
 
 if [ "$BOARD" = pi4 ]; then
-  SELECTOR="$STAGE_DIR/bmx-active-kernel.txt"
+  SELECTOR="$STAGE_DIR/bmretrosys-active-kernel.txt"
   [ -f "$SELECTOR" ] || {
-    echo "Pi4 stage is missing bmx-active-kernel.txt" >&2
+    echo "Pi4 stage is missing bmretrosys-active-kernel.txt" >&2
     exit 1
   }
   KERNEL_NAME="$(sed -n 's/^kernel=\(kernel[^[:space:]]*\.img\.c64\)$/\1/p' \

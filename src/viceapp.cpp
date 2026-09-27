@@ -14,6 +14,11 @@
 // limitations under the License.
 
 #include "viceapp.h"
+#include "update/atarimania_client.h"
+#include "update/netcheck.h"
+#if defined(RASPI_DOS)
+#include "dos/dos_debug.h"
+#endif
 
 extern "C" {
 #include "bmc64_async_network.h"
@@ -40,11 +45,47 @@ extern "C" {
 #include "bootstat_pet.h"
 #elif defined(RASPI_ATARI800)
 #include "bootstat_atari800.h"
+#elif defined(RASPI_DOS)
+#include "bootstat_dos.h"
+#elif defined(RASPI_ATARIST)
+#include "bootstat_atarist.h"
+#elif defined(RASPI_AMIGA)
+#include "bootstat_amiga.h"
 #else
   #error Unknown RASPI_ variant
 #endif
 
+// In-memory boot timeline: every EmitBootTrace phase is recorded with its
+// power-on timestamp whether or not serial output is enabled, so machines
+// can dump the BMX-side breakdown into their own log files. Labels are
+// static string literals; the table keeps the first 16 phases.
+#define BMX_BOOT_MARKS_MAX 16
+static const char *s_bootMarkLabel[BMX_BOOT_MARKS_MAX];
+static unsigned s_bootMarkTicks[BMX_BOOT_MARKS_MAX];
+static int s_bootMarkCount = 0;
+
+int BmxBootMarkCount(void) { return s_bootMarkCount; }
+
+const char *BmxBootMarkLabel(int index) {
+  if (index < 0 || index >= s_bootMarkCount) {
+    return "";
+  }
+  return s_bootMarkLabel[index];
+}
+
+unsigned BmxBootMarkTicks(int index) {
+  if (index < 0 || index >= s_bootMarkCount) {
+    return 0;
+  }
+  return s_bootMarkTicks[index];
+}
+
 static void EmitBootTrace(CSerialDevice *serial, bool enabled, const char *msg) {
+  if (msg != nullptr && s_bootMarkCount < BMX_BOOT_MARKS_MAX) {
+    s_bootMarkLabel[s_bootMarkCount] = msg;
+    s_bootMarkTicks[s_bootMarkCount] = CTimer::GetClockTicks();
+    s_bootMarkCount++;
+  }
   if (!enabled || serial == nullptr || msg == nullptr) {
     return;
   }
@@ -515,6 +556,9 @@ bool ViceStdioApp::Initialize(void) {
   }
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: emmc ready");
+#ifdef RASPI_DOS
+  bmx::dos::debug_log("core0: emmc ready");
+#endif
 
   mSYSFileSystemMounted = f_mount(&mFileSystemSYS, "SYS:", 1) == FR_OK;
   if (!mSYSFileSystemMounted) {
@@ -536,6 +580,9 @@ bool ViceStdioApp::Initialize(void) {
 
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: sd mount ready");
+#ifdef RASPI_DOS
+  bmx::dos::debug_log("core0: sd mounts ready");
+#endif
 
   InitBootStat();
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
@@ -547,6 +594,18 @@ bool ViceStdioApp::Initialize(void) {
   }
 
   StartRemoteService();
+
+  // Core-0 network worker for online resources (Atarimania). The menu
+  // thread runs scheduler-foreign on the emulator core and must never
+  // touch sockets/scheduler directly, so jobs run here instead. Creation
+  // must stay in this core-0 boot context. DOSBox-X opts out for now
+  // (no online resources; revisit if needed).
+#ifndef RASPI_DOS
+  netcheck_worker_init(atarimania_job_runner);
+#endif
+#ifdef RASPI_DOS
+  bmx::dos::debug_log("core0: network+remote+netcheck done");
+#endif
 
   // Now that emmc is initialized, launch
   // the emulator main loop on CORE 1 before USBHCII.

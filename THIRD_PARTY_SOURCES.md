@@ -1,20 +1,20 @@
 # Third-party source references
 
 This document records the external projects and source snapshots used by the
-current BMX8bit port. It distinguishes between sources that are vendored in
+current BMRetroSys port. It distinguishes between sources that are vendored in
 this repository, sources downloaded by build/staging scripts, and sources used
 only as implementation references.
 
-BMX8bit is a fork of BMX (see below). Last checked: 2026-09-20
+BMRetroSys is a fork of BMX (see below). Last checked: 2026-09-20
 
 ## BMX upstream (fork base)
 
 | Item | Value |
 | --- | --- |
-| Role | Upstream project BMX8bit is forked from |
+| Role | Upstream project BMRetroSys is forked from |
 | Upstream URL | https://github.com/kdre/bmx |
 | Base commit | `81efb7e` (`Export BMX public source 2026.08.19`) |
-| Everything above that base | BMX8bit changes (Atari port, ROM downloader, menus) |
+| Everything above that base | BMRetroSys changes (Atari port, ROM downloader, menus) |
 
 ## BMC64 upstream
 
@@ -93,6 +93,75 @@ The tree is pristine upstream except `src/config.h` (bare-metal
 `--target=libatari800` feature selection, generated-option equivalent; notably
 `NEW_CYCLE_EXACT` is enabled like every desktop build). All BMX specifics
 (framebuffer blit, input, sound pull, menus) live in `src/atari800/`.
+
+## DOSBox-X
+
+### DOSBox-X Phase-1 subset
+
+| Item | Value |
+| --- | --- |
+| Role | Active emulator core for the DOS (`RASPI_DOS`) machine (Phase-1 subset) |
+| Local path | `third_party/dosbox-x` (cut-down upstream tree: 72 `.cpp` + headers) |
+| Build uses | `third_party/dosbox-x/src` + hand-written `third_party/dosbox-x/src/config.h` |
+| Upstream URL | https://github.com/joncampbell123/dosbox-x |
+| Upstream commit | `826dfc42f1e568db92251d64f90bcbca033aeb67` |
+| Upstream commit date | `2026-09-21` |
+| License | GPL-2.0-or-later (upstream `COPYING`; staged as `/licenses/dosbox-x.txt`) |
+
+The tree is pristine upstream except `src/config.h` (bare-metal feature
+selection, written by the stub-wall task; notably the FPU is stubbed off and
+SDL threads/timers/net are replaced by Circle glue). All BMX specifics
+(frame loop, framebuffer blit, input, sound pull, menus) live in
+`src/dos/`. Subset contents are listed in
+`third_party/dosbox-x/README.BMX`. Excluded for Phase-1: `src/gui/`,
+`src/output/`, `src/libs/`, `src/debug/`, `src/gamelink/`, `src/builtin/`,
+`src/serialport/`, `src/parport/`, `ipx`, `glide`/`voodoo`/`imfc`, dynarec
+(`core_dyn_x86*`, `core_dynrec*`, `mmx.cpp`), `drive_overlay`, `drive_iso`,
+`dos_keyboard_layout`, `dos_programs.cpp`.
+
+## Hatari
+
+### Hatari 2.6.1 (ST/STE subset)
+
+| Item | Value |
+| --- | --- |
+| Role | Active emulator core for the Atari ST (`RASPI_ATARIST`) machine |
+| Local path | `third_party/hatari` (`src/` full upstream tree + `gpl.txt`) |
+| Build uses | `third_party/hatari/src` + hand-written `third_party/hatari/src/config.h` |
+| Version in tree | `2.6.1` |
+| Upstream URL | https://atarist.tuxfamily.org/ |
+| License | GPL-2.0-or-later (`third_party/hatari/gpl.txt`; staged as `/licenses/atarist.txt`) |
+
+The tree is pristine upstream except `src/config.h` (bare-metal feature
+selection: no SDL/X/libraries, no DSP, no CAPS/MIDI; newlib-shimmed
+`utime.h`) plus `bmx-shim/` (`SDL.h` opaque types for `sdlgui.h`,
+`atarist_prefix.h` force-include, `utime.h`). Excluded from the build:
+`src/sdl/`, `src/gui-sdl/`, `src/gui-osx/`, `src/gui-win/`, `src/retro/`
+(BMX providers in `src/atarist/atarist_bmx_*` take their place),
+`src/falcon/` (except `nvram.c`), `src/debug/` (except `log.c`,
+`symbols.c`, `natfeats.c`), `hdc.c`, `ide.c`, `ncr5380.c`, `nf_scsidrv.c`,
+`scu_vme.c`, `dialog.c`, `unzip.c`, `scandir.c`, `file_archive.c`.
+Kept despite Falcon/TT exclusion: `ioMemTabFalcon.c` (DSP-none mapping runs
+on every machine), `ioMemTabTT.c` (table data referenced by `ioMem.c`),
+`falcon/nvram.c` (ST NVRAM/RTC), and `main.c` (`Main_Init` is the boot path). The 68k CPU tables (`gen/cpustbl.c`,
+`gen/cpuemu_*.c`, `gen/cpudefs.c`) are generated at build time by host
+`build68k`/`gencpu` exactly like upstream's cross-compile path. All BMX
+specifics (frame loop, framebuffer blit, audio drain, IKBD injection,
+menus) live in `src/atarist/`.
+
+### EmuTOS 1.4 (512k, UK)
+
+| Item | Value |
+| --- | --- |
+| Role | Zero-config default TOS for the ATARIST machine (ST mode) |
+| Local path | `third_party/hatari/emutos/etos512uk.img` (+ `LICENSE.txt`) |
+| Staged as | `/tos/etos512uk.img` and `/licenses/emutos.txt` |
+| Upstream URL | https://sourceforge.net/projects/emutos/files/emutos/1.4/ |
+| License | GPL-2.0 (`doc/license.txt` from `emutos-512k-1.4.zip`) |
+
+Genuine Atari TOS images are proprietary: they are never vendored and are
+staged from the local pool (`roms/atari.st/`: TOS 1.06/1.62/2.06 UK) at
+SD-image time only.
 
 ## VICE
 
@@ -372,3 +441,40 @@ git ls-remote https://gitlab.freedesktop.org/mesa/mesa.git refs/tags/mesa-24.2.8
 cat third_party/source-cache/mesa-24.2.8-7d908b5a-full.tar.gz.part-* | sha256sum
 curl -fsS https://viznut.fi/unscii/unscii-8.hex | sha256sum
 ```
+
+## vAmiga
+
+### vAmiga v5.0b2 (A500 OCS subset, by reference)
+
+| Item | Value |
+| --- | --- |
+| Role | Active emulator core for the Amiga (`RASPI_AMIGA`) machine |
+| Local path | `third_party/vamiga` (vendored core + BMX shims) |
+| Build uses | `third_party/vamiga/Core/**/*.cpp` minus `Headless.cpp`, `VAmiga.cpp`, `Misc/RemoteServers/HttpTransport.cpp` |
+| Version in tree | `5.0b2` |
+| Upstream URL | https://github.com/dirkwhoffmann/vAmiga |
+| License | MPL-2.0 (upstream `LICENSE`; staged as `/licenses/vamiga.txt`) |
+
+BMX-owned files: `third_party/vamiga/bmx-shim/` (`vamiga_prefix.h`
+force-include, `sys/socket.h` + `arpa/inet.h` bare-metal shims so the
+remote-server headers parse and link without BSD sockets) and
+`third_party/vamiga/README.BMX`. Upstream is never edited. Excluded from
+the build: the desktop facade (`VAmiga.cpp`, `Headless.cpp` — BMX drives
+`vamiga::Amiga` directly, one `computeFrame()` per 50 Hz frame, no
+emulator thread) and the cpp-httplib transport (`HttpTransport.cpp` —
+needs OpenSSL/Brotli; stubbed in `src/amiga/amiga_bmx_stubs.cpp`).
+All BMX specifics (frame loop, 912x313 texture blit, Paula drain, HID
+input, DF0-ADF, Kickstart pool) live in `src/amiga/`.
+
+### DiagROM 1.3 (fallback)
+
+| Item | Value |
+| --- | --- |
+| Role | Zero-config fallback Kickstart for the AMIGA machine |
+| Local path | `../vamiga/Core/Media/Rom/DiagRom.h` (compiled in) |
+| Upstream URL | https://www.diagrom.com |
+| License | MIT (John Hertell) |
+
+Genuine Amiga Kickstarts are proprietary: they are never vendored and are
+staged from the local pool (`roms/amiga/`: kick34005.A500, kick37175.A500,
+kick40063.A600, aros-amiga-m68k-rom.bin) to SD `/kick/` at image time only.

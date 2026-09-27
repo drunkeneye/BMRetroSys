@@ -1,0 +1,9 @@
+DOSBox-X license placeholder (BMX Phase 0)
+==========================================
+
+DOSBox-X is free software licensed under the GNU General Public License
+version 2 or later (GPL-2.0-or-later). The full license text lands here
+with the Phase 1 vendoring of the cut-down DOSBox-X subset under
+third_party/dosbox-x/ (documented in THIRD_PARTY_SOURCES.md).
+
+Upstream: https://github.com/joncampbell123/dosbox-x

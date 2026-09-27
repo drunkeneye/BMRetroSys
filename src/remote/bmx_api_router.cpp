@@ -15,9 +15,9 @@ namespace bmx {
 namespace remote {
 namespace {
 
-const char kApiPrefix[] = "/bmx/api/v1";
-const char kControlsPrefix[] = "/bmx/api/v1/controls/";
-const char kActionsPrefix[] = "/bmx/api/v1/actions/";
+const char kApiPrefix[] = "/bmretrosys/api/v1";
+const char kControlsPrefix[] = "/bmretrosys/api/v1/controls/";
+const char kActionsPrefix[] = "/bmretrosys/api/v1/actions/";
 const size_t kMaximumJsonBody = 16U * 1024U;
 const size_t kMaximumJsonResponse = 32U * 1024U;
 
@@ -966,23 +966,23 @@ void BmxApiRouter::Route(const HttpRequestHead &request,
     if (result == 0) return;
     if (backend_ == 0) { RespondJsonError(503U, BMX_API_ERROR("unavailable"), result); return; }
     if (!Authenticated(request)) { RespondJsonError(403U, BMX_API_ERROR("forbidden"), result); return; }
-    if (ExactPath(request.raw_path, "/bmx/api/v1/state")) RouteState(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/menu/open"))
+    if (ExactPath(request.raw_path, "/bmretrosys/api/v1/state")) RouteState(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/menu/open"))
         RouteMenu(request, result, BmxMenuAction::Open);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/menu/close"))
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/menu/close"))
         RouteMenu(request, result, BmxMenuAction::Close);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/menu/toggle"))
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/menu/toggle"))
         RouteMenu(request, result, BmxMenuAction::Toggle);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/events")) RouteEvents(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/storage")) RouteStorage(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/files")) RouteFiles(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/file")) RouteFile(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/file/rename")) RouteFileRename(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/directory")) RouteDirectory(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/directory/rename")) RouteDirectoryRename(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/media")) RouteMedia(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/controls")) RouteControls(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/actions")) RouteActions(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/events")) RouteEvents(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/storage")) RouteStorage(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/files")) RouteFiles(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/file")) RouteFile(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/file/rename")) RouteFileRename(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/directory")) RouteDirectory(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/directory/rename")) RouteDirectoryRename(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/media")) RouteMedia(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/controls")) RouteControls(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/actions")) RouteActions(request, result);
     else if (HttpStringStartsWith(request.raw_path, HttpString(kControlsPrefix))) {
         RouteControl(request, result,
                      HttpStringView(request.raw_path.data + strlen(kControlsPrefix),
@@ -991,11 +991,11 @@ void BmxApiRouter::Route(const HttpRequestHead &request,
         RouteAction(request, result,
                     HttpStringView(request.raw_path.data + strlen(kActionsPrefix),
                                    request.raw_path.size - strlen(kActionsPrefix)));
-    } else if (ExactPath(request.raw_path, "/bmx/api/v1/input")) RouteInput(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/input/text")) RouteTextInput(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/screenshot.ppm")) RouteScreenshot(request, result);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/audio.pcm")) RouteAudio(request, result, false);
-    else if (ExactPath(request.raw_path, "/bmx/api/v1/audio.wav")) RouteAudio(request, result, true);
+    } else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/input")) RouteInput(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/input/text")) RouteTextInput(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/screenshot.ppm")) RouteScreenshot(request, result);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/audio.pcm")) RouteAudio(request, result, false);
+    else if (ExactPath(request.raw_path, "/bmretrosys/api/v1/audio.wav")) RouteAudio(request, result, true);
     else RespondJsonError(404U, BMX_API_ERROR("not_found"), result);
 }
 

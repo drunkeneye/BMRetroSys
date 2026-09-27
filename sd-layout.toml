@@ -40,8 +40,8 @@ to = "cmdline.txt"
 mode = "config"
 
 [[both.file]]
-from = "generated/bmx-active-kernel.txt"
-to = "bmx-active-kernel.txt"
+from = "generated/bmretrosys-active-kernel.txt"
+to = "bmretrosys-active-kernel.txt"
 mode = "config"
 
 [[both.file]]
@@ -80,372 +80,372 @@ profiles = ["debug"]
 # updates. Stock rpi_*.vkm files below remain release-managed.
 [[both.file]]
 from = "raspi_keymaps/c64/user_pos.vkm"
-to = "c64/user_pos.vkm"
+to = "roms/C64/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/c64/user_pos_de.vkm"
-to = "c64/user_pos_de.vkm"
+to = "roms/C64/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/c64/user_pos.vkm"
-to = "scpu64/user_pos.vkm"
+to = "roms/SCPU64/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/c64/user_pos_de.vkm"
-to = "scpu64/user_pos_de.vkm"
+to = "roms/SCPU64/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/c128/user_pos.vkm"
-to = "c128/user_pos.vkm"
+to = "roms/C128/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/c128/user_pos_de.vkm"
-to = "c128/user_pos_de.vkm"
+to = "roms/C128/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/vic20/user_pos.vkm"
-to = "vic20/user_pos.vkm"
+to = "roms/VIC20/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/vic20/user_pos_de.vkm"
-to = "vic20/user_pos_de.vkm"
+to = "roms/VIC20/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/plus4/user_pos.vkm"
-to = "plus4/user_pos.vkm"
+to = "roms/PLUS4/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/plus4/user_pos_de.vkm"
-to = "plus4/user_pos_de.vkm"
+to = "roms/PLUS4/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/pet/user_pos.vkm"
-to = "pet/user_pos.vkm"
+to = "roms/PET/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/pet/user_pos_de.vkm"
-to = "pet/user_pos_de.vkm"
+to = "roms/PET/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
 from = "raspi_keymaps/c64/rpi_maxi_pos.vkm"
-to = "c64/rpi_maxi_pos.vkm"
+to = "roms/C64/rpi_maxi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/rpi_petsciiboard_sym.vkm"
-to = "c64/rpi_petsciiboard_sym.vkm"
+to = "roms/C64/rpi_petsciiboard_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/rpi_pos.vkm"
-to = "c64/rpi_pos.vkm"
+to = "roms/C64/rpi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/rpi_pos_de.vkm"
-to = "c64/rpi_pos_de.vkm"
+to = "roms/C64/rpi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/rpi_maxi_pos.vkm"
-to = "scpu64/rpi_maxi_pos.vkm"
+to = "roms/SCPU64/rpi_maxi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/rpi_pos.vkm"
-to = "scpu64/rpi_pos.vkm"
+to = "roms/SCPU64/rpi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/rpi_pos_de.vkm"
-to = "scpu64/rpi_pos_de.vkm"
+to = "roms/SCPU64/rpi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c128/rpi_maxi_pos.vkm"
-to = "c128/rpi_maxi_pos.vkm"
+to = "roms/C128/rpi_maxi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c128/rpi_pos.vkm"
-to = "c128/rpi_pos.vkm"
+to = "roms/C128/rpi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c128/rpi_pos_de.vkm"
-to = "c128/rpi_pos_de.vkm"
+to = "roms/C128/rpi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/vic20/rpi_maxi_pos.vkm"
-to = "vic20/rpi_maxi_pos.vkm"
+to = "roms/VIC20/rpi_maxi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/vic20/rpi_pos.vkm"
-to = "vic20/rpi_pos.vkm"
+to = "roms/VIC20/rpi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/vic20/rpi_pos_de.vkm"
-to = "vic20/rpi_pos_de.vkm"
+to = "roms/VIC20/rpi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/plus4/rpi_maxi_pos.vkm"
-to = "plus4/rpi_maxi_pos.vkm"
+to = "roms/PLUS4/rpi_maxi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/plus4/rpi_pos.vkm"
-to = "plus4/rpi_pos.vkm"
+to = "roms/PLUS4/rpi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/plus4/rpi_pos_de.vkm"
-to = "plus4/rpi_pos_de.vkm"
+to = "roms/PLUS4/rpi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/rpi_pos.vkm"
-to = "pet/rpi_pos.vkm"
+to = "roms/PET/rpi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/rpi_pos_de.vkm"
-to = "pet/rpi_pos_de.vkm"
+to = "roms/PET/rpi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/raspi_sym.vkm"
-to = "c64/raspi_sym.vkm"
+to = "roms/C64/raspi_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/raspi_sym_de.vkm"
-to = "c64/raspi_sym_de.vkm"
+to = "roms/C64/raspi_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/raspi_pos.vkm"
-to = "c64/raspi_pos.vkm"
+to = "roms/C64/raspi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c64/raspi_pos_de.vkm"
-to = "c64/raspi_pos_de.vkm"
+to = "roms/C64/raspi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/scpu64/raspi_sym.vkm"
-to = "scpu64/raspi_sym.vkm"
+to = "roms/SCPU64/raspi_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/scpu64/raspi_sym_de.vkm"
-to = "scpu64/raspi_sym_de.vkm"
+to = "roms/SCPU64/raspi_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/scpu64/raspi_pos.vkm"
-to = "scpu64/raspi_pos.vkm"
+to = "roms/SCPU64/raspi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/scpu64/raspi_pos_de.vkm"
-to = "scpu64/raspi_pos_de.vkm"
+to = "roms/SCPU64/raspi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c128/raspi_sym.vkm"
-to = "c128/raspi_sym.vkm"
+to = "roms/C128/raspi_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c128/raspi_sym_de.vkm"
-to = "c128/raspi_sym_de.vkm"
+to = "roms/C128/raspi_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c128/raspi_pos.vkm"
-to = "c128/raspi_pos.vkm"
+to = "roms/C128/raspi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/c128/raspi_pos_de.vkm"
-to = "c128/raspi_pos_de.vkm"
+to = "roms/C128/raspi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/vic20/raspi_sym.vkm"
-to = "vic20/raspi_sym.vkm"
+to = "roms/VIC20/raspi_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/vic20/raspi_sym_de.vkm"
-to = "vic20/raspi_sym_de.vkm"
+to = "roms/VIC20/raspi_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/vic20/raspi_pos.vkm"
-to = "vic20/raspi_pos.vkm"
+to = "roms/VIC20/raspi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/vic20/raspi_pos_de.vkm"
-to = "vic20/raspi_pos_de.vkm"
+to = "roms/VIC20/raspi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/plus4/raspi_sym.vkm"
-to = "plus4/raspi_sym.vkm"
+to = "roms/PLUS4/raspi_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/plus4/raspi_sym_de.vkm"
-to = "plus4/raspi_sym_de.vkm"
+to = "roms/PLUS4/raspi_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/plus4/raspi_pos.vkm"
-to = "plus4/raspi_pos.vkm"
+to = "roms/PLUS4/raspi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/plus4/raspi_pos_de.vkm"
-to = "plus4/raspi_pos_de.vkm"
+to = "roms/PLUS4/raspi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_sym.vkm"
-to = "pet/raspi_sym.vkm"
+to = "roms/PET/raspi_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_sym_de.vkm"
-to = "pet/raspi_sym_de.vkm"
+to = "roms/PET/raspi_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_pos.vkm"
-to = "pet/raspi_pos.vkm"
+to = "roms/PET/raspi_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_pos_de.vkm"
-to = "pet/raspi_pos_de.vkm"
+to = "roms/PET/raspi_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_buuk_sym.vkm"
-to = "pet/raspi_buuk_sym.vkm"
+to = "roms/PET/raspi_buuk_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_buuk_sym_de.vkm"
-to = "pet/raspi_buuk_sym_de.vkm"
+to = "roms/PET/raspi_buuk_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_buuk_pos.vkm"
-to = "pet/raspi_buuk_pos.vkm"
+to = "roms/PET/raspi_buuk_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_buuk_pos_de.vkm"
-to = "pet/raspi_buuk_pos_de.vkm"
+to = "roms/PET/raspi_buuk_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_buus_sym.vkm"
-to = "pet/raspi_buus_sym.vkm"
+to = "roms/PET/raspi_buus_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_buus_sym_de.vkm"
-to = "pet/raspi_buus_sym_de.vkm"
+to = "roms/PET/raspi_buus_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_buus_pos.vkm"
-to = "pet/raspi_buus_pos.vkm"
+to = "roms/PET/raspi_buus_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_buus_pos_de.vkm"
-to = "pet/raspi_buus_pos_de.vkm"
+to = "roms/PET/raspi_buus_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_bude_sym.vkm"
-to = "pet/raspi_bude_sym.vkm"
+to = "roms/PET/raspi_bude_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_bude_sym_de.vkm"
-to = "pet/raspi_bude_sym_de.vkm"
+to = "roms/PET/raspi_bude_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_bude_pos.vkm"
-to = "pet/raspi_bude_pos.vkm"
+to = "roms/PET/raspi_bude_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_bude_pos_de.vkm"
-to = "pet/raspi_bude_pos_de.vkm"
+to = "roms/PET/raspi_bude_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_bujp_sym.vkm"
-to = "pet/raspi_bujp_sym.vkm"
+to = "roms/PET/raspi_bujp_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_bujp_sym_de.vkm"
-to = "pet/raspi_bujp_sym_de.vkm"
+to = "roms/PET/raspi_bujp_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_bujp_pos.vkm"
-to = "pet/raspi_bujp_pos.vkm"
+to = "roms/PET/raspi_bujp_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_bujp_pos_de.vkm"
-to = "pet/raspi_bujp_pos_de.vkm"
+to = "roms/PET/raspi_bujp_pos_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_grus_sym.vkm"
-to = "pet/raspi_grus_sym.vkm"
+to = "roms/PET/raspi_grus_sym.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_grus_sym_de.vkm"
-to = "pet/raspi_grus_sym_de.vkm"
+to = "roms/PET/raspi_grus_sym_de.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_grus_pos.vkm"
-to = "pet/raspi_grus_pos.vkm"
+to = "roms/PET/raspi_grus_pos.vkm"
 mode = "replace"
 
 [[both.file]]
 from = "raspi_keymaps/pet/raspi_grus_pos_de.vkm"
-to = "pet/raspi_grus_pos_de.vkm"
+to = "roms/PET/raspi_grus_pos_de.vkm"
 mode = "replace"
 
 # Utility disks are generated independently.  Empty per-machine directories
@@ -495,85 +495,146 @@ optional = true
 # Files shipped from the repository.
 [[both.file]]
 from = "sdcard/c64/ROMS.txt"
-to = "c64/ROMS.txt"
+to = "roms/C64/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/c64/bootstat.txt"
-to = "c64/bootstat.txt"
+to = "roms/C64/bootstat.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/scpu64/ROMS.txt"
-to = "scpu64/ROMS.txt"
+to = "roms/SCPU64/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/scpu64/bootstat.txt"
-to = "scpu64/bootstat.txt"
+to = "roms/SCPU64/bootstat.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/c128/ROMS.txt"
-to = "c128/ROMS.txt"
+to = "roms/C128/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/c128/bootstat.txt"
-to = "c128/bootstat.txt"
+to = "roms/C128/bootstat.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/vic20/ROMS.txt"
-to = "vic20/ROMS.txt"
+to = "roms/VIC20/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/vic20/bootstat.txt"
-to = "vic20/bootstat.txt"
+to = "roms/VIC20/bootstat.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/plus4/ROMS.txt"
-to = "plus4/ROMS.txt"
+to = "roms/PLUS4/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/plus4/bootstat.txt"
-to = "plus4/bootstat.txt"
+to = "roms/PLUS4/bootstat.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/pet/ROMS.txt"
-to = "pet/ROMS.txt"
+to = "roms/PET/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/atari/ROMS.txt"
-to = "atari/ROMS.txt"
+to = "roms/ATARI800/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/atari/bootstat.txt"
-to = "atari/bootstat.txt"
+to = "roms/ATARI800/bootstat.txt"
 mode = "keep"
 
-# Atari ROM pool. Everything in bmx/roms/a800/ is staged 1:1 to /roms/ on
-# the SD card (flat, original names kept). At boot the atari800 kernel scans
-# /roms and matches OS/BASIC/5200/drive ROMs by CRC32/size, so filenames do
-# not matter and different machine models each find their ROMs. The kernel
+[[both.file]]
+from = "sdcard/dos/ROMS.txt"
+to = "roms/DOS/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/dos/bootstat.txt"
+to = "roms/DOS/bootstat.txt"
+mode = "keep"
+
+# EmuTOS default TOS for the ATARIST machine (GPL, vendored in
+# third_party/hatari/emutos/). Genuine TOS is staged manually by the user
+# into /roms/tos/ on the SD card; never in git.
+[[both.file]]
+from = "repo/third_party/hatari/emutos/etos512uk.img"
+to = "roms/tos/etos512uk.img"
+mode = "replace"
+
+[[both.file]]
+from = "sdcard/atarist/ROMS.txt"
+to = "roms/tos/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/atarist/bootstat.txt"
+to = "roms/ATARIST/bootstat.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/amiga/ROMS.txt"
+to = "roms/kick/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/amiga/bootstat.txt"
+to = "roms/AMIGA/bootstat.txt"
+mode = "keep"
+
+# Atari ROM pool. Everything in bmx/roms/a800/ is staged 1:1 to
+# /roms/ATARI800/ on the SD card (flat, original names kept). At boot the
+# atari800 kernel scans /roms/ATARI800 (falling back to legacy /roms/atari800 and /roms) and
+# matches OS/BASIC/5200/drive ROMs by CRC32/size, so filenames do not
+# matter and different machine models each find their ROMs. The kernel
 # boots zero-config from compiled-in Altirra ROMs when nothing matches, so
 # an empty source directory is fine and stays silent (no features flag, no
 # MISSING-ROMS spam).
 [[both.tree]]
 from = "repo/roms/a800"
-to = "roms"
+to = "roms/ATARI800"
 mode = "keep"
 exclude = ["README.txt"]
 
+# Kickstart pool for the AMIGA machine. Everything in repo roms/amiga/ is
+# staged 1:1 to /roms/kick/ on the SD card (flat, original names kept). The
+# kernel scans /roms/kick (falling back to legacy /kick) for
+# kick34005.A500 / kick37175.A500 / kick40063.A600 / kick40068.A1200 /
+# aros-amiga-m68k-rom.bin and boots zero-config from the compiled-in
+# DiagROM when nothing matches.
+[[both.tree]]
+from = "repo/roms/amiga"
+to = "roms/kick"
+mode = "keep"
+exclude = ["README.txt"]
+
+# Genuine TOS pool for the ATARIST machine. Everything in repo roms/tos/ is
+# staged 1:1 to /roms/tos/ on the SD card (canonical names tos106uk.img /
+# tos162uk.img / tos206uk.img). tools/download_roms.py fills this pool
+# from archive.org; empty is fine (EmuTOS default still boots).
+[[both.tree]]
+from = "repo/roms/tos"
+to = "roms/tos"
+mode = "keep"
+exclude = ["README.txt", "etos512uk.img"]
+
 [[both.file]]
 from = "sdcard/drives/ROMS.txt"
-to = "drives/ROMS.txt"
+to = "roms/drives/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
@@ -612,23 +673,23 @@ mode = "replace"
 # The developer browser client is stored once on the SD card and shared by
 # every machine kernel. The kernel only contains its fixed HTTP router.
 [[both.file]]
-from = "sdcard/bmx/dev/ui/index.html"
-to = "bmx/dev/ui/index.html"
+from = "sdcard/bmretrosys/dev/ui/index.html"
+to = "bmretrosys/dev/ui/index.html"
 mode = "replace"
 
 [[both.file]]
-from = "sdcard/bmx/dev/ui/app.css"
-to = "bmx/dev/ui/app.css"
+from = "sdcard/bmretrosys/dev/ui/app.css"
+to = "bmretrosys/dev/ui/app.css"
 mode = "replace"
 
 [[both.file]]
-from = "sdcard/bmx/dev/ui/core.mjs"
-to = "bmx/dev/ui/core.mjs"
+from = "sdcard/bmretrosys/dev/ui/core.mjs"
+to = "bmretrosys/dev/ui/core.mjs"
 mode = "replace"
 
 [[both.file]]
-from = "sdcard/bmx/dev/ui/app.mjs"
-to = "bmx/dev/ui/app.mjs"
+from = "sdcard/bmretrosys/dev/ui/app.mjs"
+to = "bmretrosys/dev/ui/app.mjs"
 mode = "replace"
 
 [[both.tree]]
@@ -676,6 +737,26 @@ mode = "metadata"
 [[both.file]]
 from = "sdcard/licenses/atari800.txt"
 to = "licenses/atari800.txt"
+mode = "metadata"
+
+[[both.file]]
+from = "sdcard/licenses/dosbox-x.txt"
+to = "licenses/dosbox-x.txt"
+mode = "metadata"
+
+[[both.file]]
+from = "sdcard/licenses/atarist.txt"
+to = "licenses/atarist.txt"
+mode = "metadata"
+
+[[both.file]]
+from = "sdcard/licenses/vamiga.txt"
+to = "licenses/vamiga.txt"
+mode = "metadata"
+
+[[both.file]]
+from = "sdcard/licenses/emutos.txt"
+to = "licenses/emutos.txt"
 mode = "metadata"
 
 [[both.file]]
@@ -771,6 +852,21 @@ to = "kernel8.img.atari800"
 mode = "kernel"
 
 [[pi4.file]]
+from = "kernels/kernel8.img.dos"
+to = "kernel8.img.dos"
+mode = "kernel"
+
+[[pi4.file]]
+from = "kernels/kernel8.img.atarist"
+to = "kernel8.img.atarist"
+mode = "kernel"
+
+[[pi4.file]]
+from = "kernels/kernel8.img.amiga"
+to = "kernel8.img.amiga"
+mode = "kernel"
+
+[[pi4.file]]
 to = "kernel8.img.updater"
 mode = "kernel"
 optional = true
@@ -848,6 +944,21 @@ to = "kernel_2712.img.atari800"
 mode = "kernel"
 
 [[pi5.file]]
+from = "kernels/kernel_2712.img.dos"
+to = "kernel_2712.img.dos"
+mode = "kernel"
+
+[[pi5.file]]
+from = "kernels/kernel_2712.img.atarist"
+to = "kernel_2712.img.atarist"
+mode = "kernel"
+
+[[pi5.file]]
+from = "kernels/kernel_2712.img.amiga"
+to = "kernel_2712.img.amiga"
+mode = "kernel"
+
+[[pi5.file]]
 to = "kernel_2712.img.updater"
 mode = "kernel"
 optional = true
@@ -907,161 +1018,161 @@ include = ["amber.vpl", "white.vpl"]
 # ROMs remain non-fatal, matching the historical manual staging behaviour.
 [[both.file]]
 from = "roms/C64/basic-901226-01.bin"
-to = "c64/basic-901226-01.bin"
+to = "roms/C64/basic-901226-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/C64/kernal-901227-03.bin"
-to = "c64/kernal-901227-03.bin"
+to = "roms/C64/kernal-901227-03.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/C64/chargen-901225-01.bin"
-to = "c64/chargen-901225-01.bin"
+to = "roms/C64/chargen-901225-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/SCPU64/scpu64"
-to = "scpu64/scpu64"
+to = "roms/SCPU64/scpu64"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/SCPU64/chargen-901225-01.bin"
-to = "scpu64/chargen-901225-01.bin"
+to = "roms/SCPU64/chargen-901225-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/C128/basiclo-318018-04.bin"
-to = "c128/basiclo-318018-04.bin"
+to = "roms/C128/basiclo-318018-04.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/C128/basichi-318019-04.bin"
-to = "c128/basichi-318019-04.bin"
+to = "roms/C128/basichi-318019-04.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/C128/basic64-901226-01.bin"
-to = "c128/basic64-901226-01.bin"
+to = "roms/C128/basic64-901226-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/C128/kernal64-901227-03.bin"
-to = "c128/kernal64-901227-03.bin"
+to = "roms/C128/kernal64-901227-03.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/C128/kernal-318020-05.bin"
-to = "c128/kernal-318020-05.bin"
+to = "roms/C128/kernal-318020-05.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/C128/chargen-390059-01.bin"
-to = "c128/chargen-390059-01.bin"
+to = "roms/C128/chargen-390059-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/VIC20/basic-901486-01.bin"
-to = "vic20/basic-901486-01.bin"
+to = "roms/VIC20/basic-901486-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/VIC20/chargen-901460-03.bin"
-to = "vic20/chargen-901460-03.bin"
+to = "roms/VIC20/chargen-901460-03.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/VIC20/kernal.901486-06.bin"
-to = "vic20/kernal.901486-06.bin"
+to = "roms/VIC20/kernal.901486-06.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/VIC20/kernal.901486-07.bin"
-to = "vic20/kernal.901486-07.bin"
+to = "roms/VIC20/kernal.901486-07.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PLUS4/basic-318006-01.bin"
-to = "plus4/basic-318006-01.bin"
+to = "roms/PLUS4/basic-318006-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PLUS4/3plus1-317053-01.bin"
-to = "plus4/3plus1-317053-01.bin"
+to = "roms/PLUS4/3plus1-317053-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PLUS4/3plus1-317054-01.bin"
-to = "plus4/3plus1-317054-01.bin"
+to = "roms/PLUS4/3plus1-317054-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PLUS4/kernal-318004-05.bin"
-to = "plus4/kernal-318004-05.bin"
+to = "roms/PLUS4/kernal-318004-05.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PLUS4/kernal-318005-05.bin"
-to = "plus4/kernal-318005-05.bin"
+to = "roms/PLUS4/kernal-318005-05.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PET/basic-4.901465-23-20-21.bin"
-to = "pet/basic-4.901465-23-20-21.bin"
+to = "roms/PET/basic-4.901465-23-20-21.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PET/characters-2.901447-10.bin"
-to = "pet/characters-2.901447-10.bin"
+to = "roms/PET/characters-2.901447-10.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PET/characters-2.901447-10.bin"
-to = "pet/CHARGEN"
+to = "roms/PET/CHARGEN"
 mode = "keep"
 features = ["roms"]
 optional = true
@@ -1069,119 +1180,119 @@ report_missing = false
 
 [[both.file]]
 from = "roms/PET/kernal-4.901465-22.bin"
-to = "pet/kernal-4.901465-22.bin"
+to = "roms/PET/kernal-4.901465-22.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PET/edit-4-40-n-50Hz.901498-01.bin"
-to = "pet/edit-4-40-n-50Hz.901498-01.bin"
+to = "roms/PET/edit-4-40-n-50Hz.901498-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/PET/edit-4-80-b-50Hz.901474-04_.bin"
-to = "pet/edit-4-80-b-50Hz.901474-04_.bin"
+to = "roms/PET/edit-4-80-b-50Hz.901474-04_.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1001-901887+8-01.bin"
-to = "drives/dos1001-901887+8-01.bin"
+to = "roms/drives/dos1001-901887+8-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1540-325302+3-01.bin"
-to = "drives/dos1540-325302+3-01.bin"
+to = "roms/drives/dos1540-325302+3-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1541-325302-01+901229-05.bin"
-to = "drives/dos1541-325302-01+901229-05.bin"
+to = "roms/drives/dos1541-325302-01+901229-05.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1541ii-251968-03.bin"
-to = "drives/dos1541ii-251968-03.bin"
+to = "roms/drives/dos1541ii-251968-03.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1551-318008-01.bin"
-to = "drives/dos1551-318008-01.bin"
+to = "roms/drives/dos1551-318008-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1570-315090-01.bin"
-to = "drives/dos1570-315090-01.bin"
+to = "roms/drives/dos1570-315090-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1571-310654-05.bin"
-to = "drives/dos1571-310654-05.bin"
+to = "roms/drives/dos1571-310654-05.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1571cr-318047-01.bin"
-to = "drives/dos1571cr-318047-01.bin"
+to = "roms/drives/dos1571cr-318047-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1581-318045-02.bin"
-to = "drives/dos1581-318045-02.bin"
+to = "roms/drives/dos1581-318045-02.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos2031-901484-03+05.bin"
-to = "drives/dos2031-901484-03+05.bin"
+to = "roms/drives/dos2031-901484-03+05.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos2040-901468-06+07.bin"
-to = "drives/dos2040-901468-06+07.bin"
+to = "roms/drives/dos2040-901468-06+07.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos3040-901468-11-13.bin"
-to = "drives/dos3040-901468-11-13.bin"
+to = "roms/drives/dos3040-901468-11-13.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos4040-901468-14-16.bin"
-to = "drives/dos4040-901468-14-16.bin"
+to = "roms/drives/dos4040-901468-14-16.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos9000-300516+7-revC.bin"
-to = "drives/dos9000-300516+7-revC.bin"
+to = "roms/drives/dos9000-300516+7-revC.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
@@ -1275,79 +1386,51 @@ mode = "replace"
 
 # User keymaps override the managed *.vkm device policy above.
 [[both.file]]
-to = "c64/user_pos.vkm"
+to = "roms/C64/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "c64/user_pos_de.vkm"
+to = "roms/C64/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "scpu64/user_pos.vkm"
+to = "roms/SCPU64/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "scpu64/user_pos_de.vkm"
+to = "roms/SCPU64/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "c128/user_pos.vkm"
+to = "roms/C128/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "c128/user_pos_de.vkm"
+to = "roms/C128/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "vic20/user_pos.vkm"
+to = "roms/VIC20/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "vic20/user_pos_de.vkm"
+to = "roms/VIC20/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "plus4/user_pos.vkm"
+to = "roms/PLUS4/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "plus4/user_pos_de.vkm"
+to = "roms/PLUS4/user_pos_de.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "pet/user_pos.vkm"
+to = "roms/PET/user_pos.vkm"
 mode = "keep"
 
 [[both.file]]
-to = "pet/user_pos_de.vkm"
-mode = "keep"
-
-[[both.tree]]
-to = "c64"
-mode = "keep"
-
-[[both.tree]]
-to = "scpu64"
-mode = "keep"
-
-[[both.tree]]
-to = "c128"
-mode = "keep"
-
-[[both.tree]]
-to = "vic20"
-mode = "keep"
-
-[[both.tree]]
-to = "plus4"
-mode = "keep"
-
-[[both.tree]]
-to = "pet"
-mode = "keep"
-
-[[both.tree]]
-to = "drives"
+to = "roms/PET/user_pos_de.vkm"
 mode = "keep"
 
 [[both.tree]]
@@ -1371,7 +1454,7 @@ mode = "metadata"
 
 [[both.tree]]
 to = "intro"
-include = ["bmx-intro-v*.dat"]
+include = ["bmretrosys-intro-v*.dat"]
 mode = "replace"
 
 [[both.file]]
@@ -1386,177 +1469,308 @@ mode = "replace"
 to = "bcm2712d0-*.dtb"
 mode = "replace"
 
-# User-owned trees.  Tree rules preserve arbitrary local content; explicit
-# directory entries below create the empty bootstrap layout.
-[[both.tree]]
-to = "carts"
-mode = "keep"
-
+# User-owned trees. Per-platform content roots below preserve arbitrary
+# local content; explicit directory entries further down create the empty
+# bootstrap layout (platform-first: <PLATFORM>/<carts|disks|tapes|hdf>).
 # Host-staged user media. The usermedia alias binds BMX_MEDIA_DIR (default:
-# the repository parent, e.g. .../code/carts/ATARI800/*.CAR). Missing source
-# directories skip silently (optional); staged files land 1:1, all types.
+# the repository parent). Sources keep the TYPE/PLATFORM pool layout
+# (e.g. .../code/carts/ATARI800/*.CAR); each rule lands its platform slice
+# into the matching platform-first destination. Missing sources skip
+# silently (optional); staged files land 1:1, all types.
 [[both.tree]]
-from = "usermedia/carts"
-to = "carts"
+from = "usermedia/carts/C64"
+to = "systems/C64/carts"
 mode = "keep"
 optional = true
 
 [[both.tree]]
-to = "disks"
-mode = "keep"
-
-[[both.tree]]
-from = "usermedia/disks"
-to = "disks"
+from = "usermedia/carts/SCPU64"
+to = "systems/SCPU64/carts"
 mode = "keep"
 optional = true
 
 [[both.tree]]
-to = "phonebooks"
-mode = "keep"
-
-[[both.tree]]
-to = "snapshots"
-mode = "keep"
-
-[[both.tree]]
-to = "tapes"
-mode = "keep"
-
-[[both.tree]]
-from = "usermedia/tapes"
-to = "tapes"
+from = "usermedia/carts/C128"
+to = "systems/C128/carts"
 mode = "keep"
 optional = true
 
 [[both.tree]]
-to = "prg"
+from = "usermedia/carts/VIC20"
+to = "systems/VIC20/carts"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/carts/PLUS4"
+to = "systems/PLUS4/carts"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/carts/PET"
+to = "systems/PET/carts"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/carts/ATARI800"
+to = "systems/ATARI800/carts"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/C64"
+to = "systems/C64/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/SCPU64"
+to = "systems/SCPU64/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/C128"
+to = "systems/C128/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/VIC20"
+to = "systems/VIC20/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/PLUS4"
+to = "systems/PLUS4/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/PET"
+to = "systems/PET/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/ATARI800"
+to = "systems/ATARI800/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/DOS"
+to = "systems/DOS/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/ATARIST"
+to = "systems/ATARIST/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/AMIGA"
+to = "systems/AMIGA/disks"
+mode = "keep"
+optional = true
+
+# LOADPRG staging lands with the C64 (the only built machine whose
+# browser opens programs from its own root).
+[[both.directory]]
+to = "systems/C64/prg"
 mode = "keep"
 
 [[both.tree]]
 from = "usermedia/prg"
-to = "prg"
+to = "systems/C64/prg"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/tapes/SCPU64"
+to = "systems/SCPU64/tapes"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/tapes/C128"
+to = "systems/C128/tapes"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/tapes/VIC20"
+to = "systems/VIC20/tapes"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/tapes/PLUS4"
+to = "systems/PLUS4/tapes"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/tapes/PET"
+to = "systems/PET/tapes"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/tapes/ATARI800"
+to = "systems/ATARI800/tapes"
 mode = "keep"
 optional = true
 
 [[both.directory]]
-to = "carts/C64"
+to = "systems/C64/carts"
 mode = "keep"
 
 [[both.directory]]
-to = "carts/SCPU64"
+to = "systems/SCPU64/carts"
 mode = "keep"
 
 [[both.directory]]
-to = "carts/C128"
+to = "systems/C128/carts"
 mode = "keep"
 
 [[both.directory]]
-to = "carts/VIC20"
+to = "systems/VIC20/carts"
 mode = "keep"
 
 [[both.directory]]
-to = "carts/PLUS4"
+to = "systems/PLUS4/carts"
 mode = "keep"
 
 [[both.directory]]
-to = "carts/PET"
+to = "systems/PET/carts"
 mode = "keep"
 
 [[both.directory]]
-to = "carts/ATARI800"
+to = "systems/ATARI800/carts"
 mode = "keep"
 
 [[both.directory]]
-to = "disks/C64"
+to = "systems/C64/disks"
 mode = "keep"
 
 [[both.directory]]
-to = "disks/SCPU64"
+to = "systems/SCPU64/disks"
 mode = "keep"
 
 [[both.directory]]
-to = "disks/C128"
+to = "systems/C128/disks"
 mode = "keep"
 
 [[both.directory]]
-to = "disks/VIC20"
+to = "systems/VIC20/disks"
 mode = "keep"
 
 [[both.directory]]
-to = "disks/PLUS4"
+to = "systems/PLUS4/disks"
 mode = "keep"
 
 [[both.directory]]
-to = "disks/PET"
+to = "systems/PET/disks"
 mode = "keep"
 
 [[both.directory]]
-to = "disks/ATARI800"
+to = "systems/ATARI800/disks"
 mode = "keep"
 
 [[both.directory]]
-to = "tapes/C64"
+to = "systems/DOS/disks"
 mode = "keep"
 
 [[both.directory]]
-to = "tapes/SCPU64"
+to = "systems/ATARIST/disks"
 mode = "keep"
 
 [[both.directory]]
-to = "tapes/C128"
+to = "systems/C64/tapes"
 mode = "keep"
 
 [[both.directory]]
-to = "tapes/VIC20"
+to = "systems/SCPU64/tapes"
 mode = "keep"
 
 [[both.directory]]
-to = "tapes/PLUS4"
+to = "systems/C128/tapes"
 mode = "keep"
 
 [[both.directory]]
-to = "tapes/PET"
+to = "systems/VIC20/tapes"
 mode = "keep"
 
 [[both.directory]]
-to = "tapes/ATARI800"
+to = "systems/PLUS4/tapes"
 mode = "keep"
 
 [[both.directory]]
-to = "snapshots/C64"
+to = "systems/PET/tapes"
 mode = "keep"
 
 [[both.directory]]
-to = "snapshots/SCPU64"
+to = "systems/ATARI800/tapes"
 mode = "keep"
 
 [[both.directory]]
-to = "snapshots/C128"
+to = "systems/C64/snapshots"
 mode = "keep"
 
 [[both.directory]]
-to = "snapshots/VIC20"
+to = "systems/SCPU64/snapshots"
 mode = "keep"
 
 [[both.directory]]
-to = "snapshots/PLUS4"
+to = "systems/C128/snapshots"
 mode = "keep"
 
 [[both.directory]]
-to = "snapshots/PET"
+to = "systems/VIC20/snapshots"
 mode = "keep"
 
 [[both.directory]]
-to = "snapshots/ATARI800"
+to = "systems/PLUS4/snapshots"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/PET/snapshots"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/ATARI800/snapshots"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/DOS/snapshots"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/ATARIST/snapshots"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/AMIGA/snapshots"
+mode = "keep"
+
+# Hardfile home for the AMIGA machine (HD0/HD1 attach from the Drives
+# menu; DH0 boots first when bootable).
+[[both.directory]]
+to = "systems/AMIGA/hdf"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/AMIGA/disks"
 mode = "keep"
 
 [[both.directory]]
 to = "phonebooks"
-mode = "keep"
-
-[[both.directory]]
-to = "intro"
 mode = "keep"
 
 [[both.directory]]

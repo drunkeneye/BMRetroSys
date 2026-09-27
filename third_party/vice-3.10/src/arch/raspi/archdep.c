@@ -82,7 +82,10 @@ const char *archdep_boot_path(void) { return ""; }
 char *archdep_default_sysfile_pathlist(const char *emu_id) {
 
   if (default_path == NULL) {
-    default_path = util_concat(archdep_boot_path(), "/", NULL);
+    // System ROMs and keymaps live under roms/<MACHINE> (e.g. roms/C64,
+    // roms/drives). Single entry, no legacy fallback: pre-harmonization
+    // cards keep their files where they were, but nothing looks there.
+    default_path = util_concat(archdep_boot_path(), "roms", NULL);
   }
 
   return default_path;

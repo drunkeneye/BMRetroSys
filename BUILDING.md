@@ -79,7 +79,7 @@ tools/install_sd.sh pi4 /path/to/mounted/boot
 
 The install target must be the exact mounted FAT/vfat boot partition, not a
 directory below it. The script resolves the selected Pi4 kernel from
-`bmx-active-kernel.txt`, accepts only `kernel8.img.c64` or the explicit
+`bmretrosys-active-kernel.txt`, accepts only `kernel8.img.c64` or the explicit
 AArch32 `kernel7l.img.c64`, refuses targets on the current system disk, then
 clears the top level of the target partition before copying the staged tree.
 

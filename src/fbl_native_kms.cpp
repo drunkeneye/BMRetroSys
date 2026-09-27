@@ -2346,7 +2346,22 @@ void FrameBufferLayer::PresentLayerList(bool sync, FrameBufferLayer **layers,
   // Fence that submission before selecting and writing the nominal back
   // buffer (or its alternate HVS display-list slot).  Waiting in
   // PresentScanout would be too late because rendering happens first.
-  if (g_kms_active && !pi5kms::SynchronizePreviousPresent()) {
+  //
+  // Mailbox layers (dos VIC: 70fps producer, 50Hz display) skip the
+  // fence: double-buffered slots mean a pending back buffer is overwritten,
+  // never a scanning one, so the producer is never throttled and the
+  // display shows the latest frame at its own vsync. Any non-mailbox
+  // showing layer (UI menu overlay, lifecycle changes) keeps the fence,
+  // preserving genlocked behavior for everyone else.
+  bool all_mailbox = true;
+  for (unsigned i = 0; i < FB_NUM_LAYERS; i++) {
+    if (g_layers[i] && g_layers[i]->Showing() && !g_layers[i]->Mailbox()) {
+      all_mailbox = false;
+      break;
+    }
+  }
+  if (g_kms_active && !all_mailbox &&
+      !pi5kms::SynchronizePreviousPresent()) {
     printf("boot: pi4kms present status=fail phase=buffer-reuse-fence\r\n");
     return;
   }
@@ -2736,6 +2751,14 @@ void FrameBufferLayer::SetInterpolation(int enable) {
 void FrameBufferLayer::SetUsesShader(bool enable) {
   (void) enable;
   uses_shader_ = false;
+}
+
+void FrameBufferLayer::SetMailbox(bool enable) {
+  mailbox_ = enable;
+}
+
+bool FrameBufferLayer::Mailbox() const {
+  return mailbox_;
 }
 
 void FrameBufferLayer::SetShaderParams(

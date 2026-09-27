@@ -58,6 +58,7 @@
 #include "ui_geometry.h"
 
 #include "charset.h"
+#include "circle.h"
 #include "imagecontents.h"
 #include "imagecontents/diskcontents.h"
 #include "imagecontents/tapecontents.h"
@@ -69,8 +70,8 @@ extern void poweroff(void);
 #define VARIANT_STRING ""
 
 // Project identity (user-visible About title + log overlay).
-#define BMX8BIT_PROJECT_NAME "BMX8bit"
-#define BMX8BIT_PROJECT_VERSION "0.1"
+#define BMRETROSYS_PROJECT_NAME "BMRetroSys"
+#define BMRETROSYS_PROJECT_VERSION "0.2"
 
 #define BMC64_DIRENT_FAT_ATTR_VALID 0x0100
 #define FAT_ATTR_DIRECTORY 0x10
@@ -130,6 +131,9 @@ typedef enum {
   MACHINE_EMULATOR_XPLUS4EMU,
   MACHINE_EMULATOR_XPET,
   MACHINE_EMULATOR_ATARI800,
+  MACHINE_EMULATOR_DOS,
+  MACHINE_EMULATOR_ATARIST,
+  MACHINE_EMULATOR_AMIGA,
   MACHINE_EMULATOR_UNKNOWN,
 } MachineEmulator;
 
@@ -356,6 +360,185 @@ struct menu_item *network_dns_item;
 struct menu_item *network_wifi_ssid_item;
 struct menu_item *network_wifi_psk_item;
 struct menu_item *network_wifi_country_item;
+
+// Atarimania online resources (Atari 8-bit only, see root menu build).
+// Declared locally: the client lives in src/update (see
+// update/atarimania_client.h), outside the common include path.
+#define ATARIMANIA_GAMES 0
+#define ATARIMANIA_DEMOS 1
+#define ATARIMANIA_UTILS 2
+#define ATARIMANIA_MAX_RESULTS 25
+#define NETCHECK_JOB_NONE 0
+#define NETCHECK_JOB_TEST 1
+#define NETCHECK_JOB_SEARCH 2
+#define NETCHECK_JOB_DETAIL 3
+int atarimania_page_current(void);
+int atarimania_page_total(void);
+int atarimania_result_count(void);
+const char *atarimania_result_title(int index);
+const char *atarimania_result_year(int index);
+const char *atarimania_result_url(int index);
+int netcheck_job_start_test(void);
+int netcheck_job_start_search(const char *query, int collection, int page);
+int netcheck_job_start_detail(const char *url);
+int netcheck_job_poll(int *kind_out, int *result_out, char *msg_out,
+                         size_t msg_size, char *path_out, size_t path_size,
+                         unsigned *tag_out);
+unsigned netcheck_job_tag(void);
+void netcheck_job_stage_text(char *out, size_t out_size);
+// Host trace sink (atari kernel forwards into the debug log; weak
+// elsewhere). Menu-side events, so silent button presses are diagnosable.
+void netcheck_host_trace(const char *line);
+const char *atarimania_last_error(void);
+static struct menu_item *atarimania_search_item;
+static struct menu_item *atarimania_collection_item;
+static struct menu_item *atarimania_folder_item;
+static char atarimania_query[81];
+static void atarimania_run_search(void);
+
+// ---- Atarimania background jobs (core-0 worker) ----
+// The menu thread never blocks on the network: handlers start a job and
+// return immediately; ui_poll_background_work (every menu-pump iteration)
+// completes it, enforces the watchdog, and keeps the Cancel rows live.
+// A primitive wedged mid-call orphans the worker; the watchdog reports a
+// timeout and only a reboot recovers the slot.
+static int net_awaiting = 0;
+static unsigned net_live_tag = 0;
+static int net_live_kind = 0;
+static unsigned long net_deadline_us = 0;
+// Set around programmatic pop+push rebuilds so the pop callback can tell
+// rebuilds apart from the user quitting the dialog.
+static int net_rebuilding = 0;
+void netcheck_job_cancel(void);
+// Buttons showing the live job stage as their fitted value.
+static struct menu_item *net_stage_items[2] = {NULL, NULL};
+static void atarimania_show_dialog(int searching);
+static void atarimania_rebuild_dialog(int searching);
+static void atarimania_open_dump(const char *abs_path);
+static int net_dialog_open;
+static void net_trace(const char *what);
+
+static unsigned net_timeout_for(int kind) {
+  switch (kind) {
+  case NETCHECK_JOB_TEST:
+    return 60;
+  case NETCHECK_JOB_SEARCH:
+    return 60;
+  case NETCHECK_JOB_DETAIL:
+    return 300;
+  default:
+    return 30;
+  }
+}
+
+static void net_armed(int kind) {
+  net_awaiting = 1;
+  net_live_kind = kind;
+  net_live_tag = netcheck_job_tag();
+  net_deadline_us =
+      circle_get_ticks() + (unsigned long)net_timeout_for(kind) * 1000000UL;
+}
+
+// Menu-side trace into the shared log (proves button/handler/poll flow;
+// the worker traces the network stages themselves).
+static void net_trace(const char *what) {
+  char line[128];
+  snprintf(line, sizeof(line), "menu %s", what != NULL ? what : "?");
+  if (netcheck_host_trace != 0) {
+    netcheck_host_trace(line);
+  }
+}
+
+static void net_settled(void) {
+  int i;
+  net_awaiting = 0;
+  for (i = 0; i < 2; i++) {
+    if (net_stage_items[i] != NULL) {
+      ui_menu_set_button_value_fitted(net_stage_items[i], "", 0);
+    }
+  }
+}
+
+static void net_job_failed(const char *msg) {
+  if (msg != NULL && msg[0] != '\0' && strcmp(msg, "Canceled") != 0) {
+    ui_error("%s", msg);
+  } else if (msg != NULL && strcmp(msg, "Canceled") == 0) {
+    ui_info("Canceled");
+  } else {
+    ui_error("Network job failed");
+  }
+}
+
+void ui_poll_background_work(void) {
+  int kind, result;
+  char msg[160];
+  char path[160];
+  unsigned tag;
+  char tline[96];
+  char stage[64];
+  int i;
+  // Placeholder behavior for the search dialog: the "Search" label
+  // vanishes on the first keystroke and returns when cleared.
+  if (net_dialog_open && atarimania_search_item != NULL) {
+    int empty = atarimania_search_item->str_value[0] == '\0';
+    int labeled =
+        strcmp(atarimania_search_item->name, "Search") == 0;
+    if (!empty && labeled) {
+      snprintf(atarimania_search_item->name, MAX_MENU_STR, "%s", "");
+    } else if (empty && !labeled) {
+      snprintf(atarimania_search_item->name, MAX_MENU_STR, "Search");
+    }
+  }
+  if (!net_awaiting) {
+    return;
+  }
+  // Live stage text on the buttons while the worker runs.
+  netcheck_job_stage_text(stage, sizeof(stage));
+  for (i = 0; i < 2; i++) {
+    if (net_stage_items[i] != NULL) {
+      ui_menu_set_button_value_fitted(net_stage_items[i], stage, 0);
+    }
+  }
+  if (netcheck_job_poll(&kind, &result, msg, sizeof(msg), path,
+                          sizeof(path), &tag)) {
+    if (tag != net_live_tag) {
+      return;  // stale orphan completion; the watchdog bounds the wait
+    }
+    snprintf(tline, sizeof(tline), "poll done kind=%d result=%d tag=%u",
+             kind, result, tag);
+    net_trace(tline);
+    net_settled();
+    if (kind == NETCHECK_JOB_TEST) {
+      if (result == 1) {
+        ui_info("%s", msg);
+      } else {
+        net_job_failed(msg);
+      }
+    } else if (kind == NETCHECK_JOB_SEARCH) {
+      if (result > 0) {
+        // Refresh the open dialog with results; if the user already
+        // left it, the results show on the next open.
+        if (net_dialog_open) {
+          atarimania_rebuild_dialog(0);
+        }
+      } else {
+        net_job_failed(msg[0] != '\0' ? msg : atarimania_last_error());
+      }
+    } else if (kind == NETCHECK_JOB_DETAIL) {
+      if (result == 1) {
+        atarimania_open_dump(path);
+      } else {
+        net_job_failed(msg);
+      }
+    }
+    return;
+  }
+  if ((long)(circle_get_ticks() - net_deadline_us) >= 0) {
+    net_trace("poll watchdog timeout");
+    net_settled();
+    ui_error("Network job timed out - reboot to retry");
+  }
+}
 static struct emux_wifi_ap network_wifi_aps[32];
 struct menu_item *rs232net_enable_item;
 struct menu_item *rs232net_mode_item;
@@ -397,7 +580,6 @@ struct menu_item *pip_location_item;
 struct menu_item *pip_swapped_item;
 
 struct menu_item *c40_80_column_item;
-struct menu_item *dir_convention_item;
 
 struct menu_item *scaling_interp_item;
 
@@ -504,6 +686,9 @@ int emux_atari_save_set(char *path);
 int emux_atari_load_set(char *path);
 int emux_atari_blank_atr(char *path);
 int emux_atari_uncompress(char *path, char *out_path, size_t out_size);
+int emux_atari_cart_types_for_kb(int kb, int *ids, const char **descs,
+                                 int max);
+void emux_atari_set_cart_type(int type);
 static int joyswap;
 static int statusbar_forced;
 
@@ -585,7 +770,7 @@ static char current_volume_names[NUM_DIR_TYPES][8];
 // Keep track of current directory for each type of file.
 static char current_dir_names[NUM_DIR_TYPES][256];
 // Set to the sub dir name for this type.
-static char machine_sub_dir[16];
+static char machine_sub_dir[32];
 // Keep track of last iec dirs for each drive
 static char last_iec_dir[4][256];
 
@@ -1074,17 +1259,87 @@ static struct menu_item *show_files(DirType dir_type, FileFilter filter,
 
 
 static void show_about() {
-  struct menu_item *about_root = ui_push_menu(32, 8);
+  struct menu_item *about_root = ui_push_menu(40, 10);
   char title[96];
-  char version[65];
+  char stamp[64];
   char desc[32];
 
-  if (circle_get_bmx_version(version, sizeof(version)) != 0) {
-    strncpy(version, "unknown", sizeof(version) - 1);
-    version[sizeof(version) - 1] = '\0';
+  // Build fingerprint: FNV-1a 64-bit over the running kernel image
+  // (computed once; the updater version slot reads "unknown" on fork
+  // builds without release metadata). Identifies the exact binary.
+  {
+    static char kernel_hash[17] = {0};
+    static int kernel_hash_done = 0;
+    if (!kernel_hash_done) {
+      kernel_hash_done = 1;
+      snprintf(kernel_hash, sizeof(kernel_hash), "unknown");
+      const char *kname = NULL;
+      switch (emux_machine_class) {
+      case BMC64_MACHINE_CLASS_C64:
+        kname = "kernel8.img";
+        break;
+      case BMC64_MACHINE_CLASS_SCPU64:
+        kname = "kernel8.img.scpu64";
+        break;
+      case BMC64_MACHINE_CLASS_C128:
+        kname = "kernel8.img.c128";
+        break;
+      case BMC64_MACHINE_CLASS_VIC20:
+        kname = "kernel8.img.vic20";
+        break;
+      case BMC64_MACHINE_CLASS_PLUS4:
+      case BMC64_MACHINE_CLASS_PLUS4EMU:
+        kname = "kernel8.img.plus4";
+        break;
+      case BMC64_MACHINE_CLASS_PET:
+        kname = "kernel8.img.pet";
+        break;
+      case BMC64_MACHINE_CLASS_ATARI800:
+        kname = "kernel8.img.atari800";
+        break;
+      case BMC64_MACHINE_CLASS_DOS:
+        kname = "kernel8.img.dos";
+        break;
+      case BMC64_MACHINE_CLASS_ATARIST:
+        kname = "kernel8.img.atarist";
+        break;
+      case BMC64_MACHINE_CLASS_AMIGA:
+        kname = "kernel8.img.amiga";
+        break;
+      default:
+        break;
+      }
+      if (kname != NULL) {
+        static const char *vols[] = {"SYS:/", "SD:/", "/", ""};
+        unsigned i;
+        for (i = 0; i < sizeof(vols) / sizeof(vols[0]); i++) {
+          char path[96];
+          FILE *fp;
+          snprintf(path, sizeof(path), "%s%s", vols[i], kname);
+          fp = fopen(path, "rb");
+          if (fp != NULL) {
+            // FNV-1a 64-bit.
+            unsigned long long h = 14695981039346656037ULL;
+            unsigned char buf[32768];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
+              size_t k;
+              for (k = 0; k < n; k++) {
+                h ^= (unsigned long long)buf[k];
+                h *= 1099511628211ULL;
+              }
+            }
+            fclose(fp);
+            snprintf(kernel_hash, sizeof(kernel_hash), "%016llx", h);
+            break;
+          }
+        }
+      }
+    }
+    snprintf(title, sizeof(title), "%s %s %s", BMRETROSYS_PROJECT_NAME,
+             BMRETROSYS_PROJECT_VERSION, kernel_hash);
   }
-  snprintf(title, sizeof(title), "%s %s %s", BMX8BIT_PROJECT_NAME,
-           BMX8BIT_PROJECT_VERSION, version);
+  snprintf(stamp, sizeof(stamp), "%s %s", __DATE__, __TIME__);
 
   switch (emux_machine_class) {
   case BMC64_MACHINE_CLASS_C64:
@@ -1107,9 +1362,16 @@ static void show_about() {
     strncpy (desc, "A Bare Metal PET Emulator", 31);
     break;
   case BMC64_MACHINE_CLASS_ATARI800:
-    snprintf(title, sizeof(title), "%s %s %s", BMX8BIT_PROJECT_NAME,
-             BMX8BIT_PROJECT_VERSION, version);
-    strncpy (desc, "A Bare Metal Atari Emulator", 31);
+    strncpy (desc, "A Bare Metal 8Bit Emulator", 31);
+    break;
+  case BMC64_MACHINE_CLASS_DOS:
+    strncpy (desc, "A Bare Metal DOS Emulator", 31);
+    break;
+  case BMC64_MACHINE_CLASS_ATARIST:
+    strncpy (desc, "A Bare Metal ST Emulator", 31);
+    break;
+  case BMC64_MACHINE_CLASS_AMIGA:
+    strncpy (desc, "A Bare Metal Amiga Emulator", 31);
     break;
   default:
     strncpy (title, "ERROR", 15);
@@ -1118,14 +1380,17 @@ static void show_about() {
   }
 
   ui_menu_add_button(MENU_TEXT, about_root, title);
+  ui_menu_add_button(MENU_TEXT, about_root, stamp);
+  ui_menu_add_button(MENU_TEXT, about_root, "");
   ui_menu_add_button(MENU_TEXT, about_root, desc);
 
   ui_menu_add_button(MENU_TEXT, about_root, "For the Raspberry Pi 4/5");
 
   ui_menu_add_divider(about_root);
   ui_menu_add_button(MENU_TEXT, about_root,
-                     "https://github.com/drunkeneye/BMX8bit");
-  ui_menu_add_button(MENU_TEXT, about_root, "---------------------------");
+                     "https://github.com/drunkeneye/BMRetroSys");
+  ui_menu_add_button(MENU_TEXT, about_root,
+                     "----------------------------------------");
 }
 
 struct license_menu_entry {
@@ -1143,6 +1408,9 @@ static const struct license_menu_entry license_menu_entries[] = {
   { MENU_LICENSE_BROADCOM, "Broadcom firmware", "/licenses/broadcom.txt" },
   { MENU_LICENSE_LINUX, "Linux", "/licenses/linux.txt" },
   { MENU_LICENSE_ATARI800, "Atari800", "/licenses/atari800.txt" },
+  { MENU_LICENSE_DOS, "DOSBox-X", "/licenses/dosbox-x.txt" },
+  { MENU_LICENSE_ATARIST, "Hatari", "/licenses/atarist.txt" },
+  { MENU_LICENSE_AMIGA, "vAmiga", "/licenses/vamiga.txt" },
   { MENU_LICENSE_THIRD_PARTY, "Third-party sources", "/licenses/third_party_sources.txt" },
 };
 
@@ -1894,7 +2162,7 @@ static void show_machine_switch_error(const struct bmx_machine *machine,
   if (status == BMC64_SWITCH_ERROR_SELECTOR_INVALID) {
     ui_confirm_wrapped(
         "Boot selector invalid",
-        "bmx-active-kernel.txt is missing, damaged, for another board, or "
+        "bmretrosys-active-kernel.txt is missing, damaged, for another board, or "
         "does not match this release. The machine selection was not changed. "
         "Restore the file from the same BMX release ZIP.",
         -1, -1);
@@ -3800,11 +4068,21 @@ static void show_wifi_ap_list(void) {
 }
 
 static int menu_text_field_return(struct menu_item *item) {
+  char tline[96];
   update_pending_action_state();
+  snprintf(tline, sizeof(tline), "text_return id=%d is_search=%d",
+           item != NULL ? item->id : -1,
+           item != NULL && item == atarimania_search_item ? 1 : 0);
+  net_trace(tline);
   if (item == network_wifi_ssid_item &&
       item->str_value[0] == '\0' &&
       !item->disabled) {
     show_wifi_ap_list();
+    return 1;
+  }
+  if (item == atarimania_search_item) {
+    // Enter in the term popup runs the search straight to results.
+    atarimania_run_search();
     return 1;
   }
 
@@ -4080,6 +4358,10 @@ static void build_network_menu(struct menu_item *root) {
   update_network_address_field_state();
   refresh_dhcp_network_fields();
 
+  net_stage_items[0] =
+      ui_menu_add_button(MENU_NETWORK_TEST_INTERNET, root,
+                         "Test internet connection...");
+
   ui_menu_add_divider(root);
   rs232net_enable_item = ui_menu_add_toggle(
       MENU_RS232NET_ENABLE, root, "RS232", network_state.rs232net);
@@ -4155,7 +4437,12 @@ static void ui_set_hotkeys() {
   kbd_set_hotkey_function(7, 0, BTN_ASSIGN_UNDEF);
 
   // VICE hotkey items are not built on the Atari port (own F6..F11 map).
-  if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800) {
+  // DOS is also a non-VICE core with no VICE hotkey items.
+  // ATARIST is also a non-VICE core.
+  if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
+      emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
+      emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
+      emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
     return;
   }
 
@@ -4512,6 +4799,15 @@ static int save_settings() {
   case BMC64_MACHINE_CLASS_ATARI800:
     fp = fopen("/settings-atari800.txt", "w");
     break;
+  case BMC64_MACHINE_CLASS_DOS:
+    fp = fopen("/settings-dos.txt", "w");
+    break;
+  case BMC64_MACHINE_CLASS_ATARIST:
+    fp = fopen("/settings-atarist.txt", "w");
+    break;
+  case BMC64_MACHINE_CLASS_AMIGA:
+    fp = fopen("/settings-amiga.txt", "w");
+    break;
   default:
     printf("ERROR: Unhandled machine\n");
     return 1;
@@ -4563,7 +4859,11 @@ static int save_settings() {
     }
   }
   // VICE CBM/CTRL hotkeys are not built on the Atari port.
-  if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800) {
+  // DOS is also a non-VICE core.
+  if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
   fprintf(fp, "hotkey_cf1=%d\n", hotkey_cf1_item->value);
   fprintf(fp, "hotkey_cf3=%d\n", hotkey_cf3_item->value);
   fprintf(fp, "hotkey_cf5=%d\n", hotkey_cf5_item->value);
@@ -4652,7 +4952,6 @@ static int save_settings() {
   fprintf(fp, "sound_output_priority=%d\n",
           sound_output_priority_item->choice_ints[
               sound_output_priority_item->value]);
-  fprintf(fp, "dir_convention=%d\n", dir_convention_item->value);
   fprintf(fp, "use_int_scaling_0=%d\n", use_scaling_params_item[0]->value);
   if (emux_machine_class == BMC64_MACHINE_CLASS_C128) {
      fprintf(fp, "use_int_scaling_1=%d\n", use_scaling_params_item[1]->value);
@@ -4881,6 +5180,15 @@ static int load_settings() {
     break;
   case BMC64_MACHINE_CLASS_ATARI800:
     fp = fopen("/settings-atari800.txt", "r");
+    break;
+  case BMC64_MACHINE_CLASS_DOS:
+    fp = fopen("/settings-dos.txt", "r");
+    break;
+  case BMC64_MACHINE_CLASS_ATARIST:
+    fp = fopen("/settings-atarist.txt", "r");
+    break;
+  case BMC64_MACHINE_CLASS_AMIGA:
+    fp = fopen("/settings-amiga.txt", "r");
     break;
   default:
     printf("ERROR: Unhandled machine\n");
@@ -5146,8 +5454,6 @@ static int load_settings() {
     } else if (strcmp(name, "sound_output_priority") == 0) {
       apply_sound_output_priority_setting(value);
       sound_output_priority_loaded = 1;
-    } else if (strcmp(name, "dir_convention") == 0) {
-      dir_convention_item->value = value;
     } else if (strcmp(name, "use_int_scaling_0") == 0) {
       use_scaling_params_item[0]->value = value;
     } else if (strcmp(name, "use_int_scaling_1") == 0 && emux_machine_class == BMC64_MACHINE_CLASS_C128) {
@@ -5381,37 +5687,59 @@ void menu_swap_joysticks() {
   ui_set_joy_items();
 }
 
-static void attach_cart(int menu_id, struct menu_item *item) {
-  emux_attach_cart(menu_id, zip_pick_path(DIR_CARTS, item->str_value));
+static int attach_cart(int menu_id, struct menu_item *item) {
+  return emux_attach_cart(menu_id, zip_pick_path(DIR_CARTS,
+                                                 item->str_value));
 }
 
-// Reset current_dir_names according to preference.
+// "Unknown cartridge type" flow (desktop TUI parity): the image mounted
+// but its type could not be detected (raw .rom); offer the types matching
+// its size in KB and apply the pick with reboot.
+static void show_atari_cart_type_menu(int kb) {
+  struct menu_item *menu;
+  int ids[64];
+  const char *descs[64];
+  int n, i;
+  char title[64];
+  n = emux_atari_cart_types_for_kb(kb, ids, descs, 64);
+  if (n <= 0) {
+    ui_error("No cartridge types for this size");
+    return;
+  }
+  menu = ui_push_menu(-1, -1);
+  if (menu == NULL) {
+    ui_error("Menu stack is full");
+    return;
+  }
+  snprintf(title, sizeof(title), "Select Cartridge Type (%d KB)", kb);
+  ui_menu_add_button(MENU_TEXT, menu, title);
+  ui_menu_add_divider(menu);
+  for (i = 0; i < n; i++) {
+    struct menu_item *b =
+        ui_menu_add_button(MENU_ATARI_CART_TYPE, menu, (char *)descs[i]);
+    if (b == NULL) {
+      break;
+    }
+    snprintf(b->str_value, sizeof(b->str_value), "%d", ids[i]);
+  }
+}
+
+// Browser roots, platform-first always: <PLATFORM>/<type>
+// (e.g. AMIGA/disks). The retired DIR_CONVENTION switch died with the
+// type-first SD layout; old dir_convention= keys in settings files are
+// ignored by the loader.
 static void set_current_dir_names() {
   int i;
 
-  switch (dir_convention_item->value) {
-     case MENU_DIR_CONVENTION_FOLDER_EMU:
-        for (i = 0; i < NUM_DIR_TYPES; i++) {
-          strcpy(current_dir_names[i], default_dir_names[i]);
-          strcat(current_dir_names[i], machine_sub_dir);
-        }
-        strcpy(current_dir_names[DIR_ROOT], "/");
-        break;
-     case MENU_DIR_CONVENTION_EMU_FOLDER:
-        for (i = 0; i < NUM_DIR_TYPES; i++) {
-          strcpy(current_dir_names[i], machine_sub_dir);
-          strcat(current_dir_names[i], default_dir_names[i]);
-        }
-        strcpy(current_dir_names[DIR_ROOT], machine_sub_dir);
-        break;
-     default:
-        assert(0);
-        break;
+  for (i = 0; i < NUM_DIR_TYPES; i++) {
+    strcpy(current_dir_names[i], machine_sub_dir);
+    strcat(current_dir_names[i], default_dir_names[i]);
   }
+  strcpy(current_dir_names[DIR_ROOT], machine_sub_dir);
 
   // These don't change
   strcpy(current_dir_names[DIR_ROMS], machine_sub_dir);
-  strcpy(current_dir_names[DIR_DRIVE_ROMS], "/drives");
+  strcpy(current_dir_names[DIR_DRIVE_ROMS], "/roms/drives");
   strcpy(current_dir_names[DIR_IEC], "/");
   strcpy(current_dir_names[DIR_PHONEBOOK], "/");
 
@@ -5508,6 +5836,8 @@ static int zip_purpose_allows(int id) {
   case MENU_TAPE_FILE:
   case MENU_LOADPRG_FILE:
   case MENU_AUTOSTART_FILE:
+  case MENU_AMIGA_HDF0_FILE:
+  case MENU_AMIGA_HDF1_FILE:
   case MENU_ATARI_DRV_FILE:
   case MENU_ATARI_CART_FILE:
   case MENU_C64_CART_FILE:
@@ -5765,6 +6095,208 @@ static int zip_extract_pick(struct menu_item *item) {
   return 0;
 }
 
+// ---- Atarimania online resources (Atari 8-bit) ----
+
+// Rewrite a dump-browser pick to the attach flow matching its extension:
+// disks to D1.., tapes to the cassette, cartridges to the cart slot.
+static int atarimania_rewrite_pick(struct menu_item *item) {
+  const char *dot = strrchr(item->str_value, '.');
+  if (dot == NULL) {
+    ui_error("Unsupported file type");
+    return -1;
+  }
+  if (strcasecmp(dot, ".atr") == 0 || strcasecmp(dot, ".xfd") == 0 ||
+      strcasecmp(dot, ".atx") == 0 || strcasecmp(dot, ".dcm") == 0 ||
+      strcasecmp(dot, ".pro") == 0 || strcasecmp(dot, ".atz") == 0 ||
+      strcasecmp(dot, ".xfz") == 0) {
+    item->id = MENU_ATARI_DRV_FILE;
+  } else if (strcasecmp(dot, ".cas") == 0) {
+    item->id = MENU_TAPE_FILE;
+  } else if (strcasecmp(dot, ".car") == 0) {
+    item->id = MENU_ATARI_CART_FILE;
+  } else if (strcasecmp(dot, ".rom") == 0 &&
+             emux_machine_class == BMC64_MACHINE_CLASS_ATARI800) {
+    // Raw ROM image: attach, then the CART case asks for the type when
+    // detection fails (desktop TUI parity).
+    item->id = MENU_ATARI_CART_FILE;
+  } else {
+    ui_error("Unsupported file type");
+    return -1;
+  }
+  return 0;
+}
+
+// Open a downloaded dump archive in the zip browser.
+static void atarimania_open_dump(const char *abs_path) {
+  struct zip_level *top;
+  char err[128];
+  if (zipbrowse_open(abs_path, err, sizeof(err)) != 0) {
+    ui_error(err[0] != '\0' ? err : "Cannot open dump archive");
+    return;
+  }
+  zipbrowse_close();
+  zip_depth = 0;
+  top = &zip_stack[zip_depth];
+  snprintf(top->zip_abs, sizeof(top->zip_abs), "%s", abs_path);
+  top->prefix[0] = '\0';
+  zip_purpose_id = MENU_ATARIAMANIA_DUMP;
+  zip_filter = FILTER_NONE;
+  zip_depth++;
+  ui_info("Opening archive...");
+  zip_open_level();
+}
+
+// Run the search and show the productions in a fresh results submenu.
+// The search dialog is a popup window: the term field on the top line,
+// results below it. Rebuilt in place whenever the content changes (new
+// search, page turn, completion); net_dialog_open tracks whether it is
+// currently on the stack (cleared by the pop callback, which also clears
+// itself so reused slots never fire stale).
+static int net_dialog_open = 0;
+
+static void net_dialog_popped(struct menu_item *old_root,
+                              struct menu_item *new_root) {
+  (void)new_root;
+  net_dialog_open = 0;
+  if (old_root != NULL) {
+    old_root->on_popped_off = NULL;
+  }
+  // User quit the dialog (not one of our rebuilds): stop a running
+  // search so it never blocks other jobs. The late completion is then
+  // ignored by tag; no message (the user already left).
+  if (!net_rebuilding && net_awaiting &&
+      net_live_kind == NETCHECK_JOB_SEARCH) {
+    netcheck_job_cancel();
+    net_awaiting = 0;
+  }
+}
+
+// Builds the dialog content into a fresh popup. When searching is set,
+// a placeholder row shows instead of results.
+static void atarimania_build_dialog(struct menu_item *menu, int searching) {
+  int count, i, cur, total;
+  atarimania_search_item = ui_menu_add_text_field_limited(
+      MENU_ATARIAMANIA_SEARCH, menu, "Search", atarimania_query, 80);
+  ui_menu_set_text_field_display(atarimania_search_item, 40, 0);
+  ui_menu_add_divider(menu);
+  if (searching) {
+    ui_menu_add_button(MENU_TEXT, menu, "(searching...)");
+    return;
+  }
+  count = atarimania_result_count();
+  if (count <= 0) {
+    ui_menu_add_button(MENU_TEXT, menu, "(type a term, press Enter)");
+    return;
+  }
+  cur = atarimania_page_current();
+  total = atarimania_page_total();
+  {
+    char title[128];
+    if (total > 1) {
+      snprintf(title, sizeof(title), "Page %d of %d", cur, total);
+    } else {
+      snprintf(title, sizeof(title), "%d result%s", count,
+               count == 1 ? "" : "s");
+    }
+    ui_menu_add_button(MENU_TEXT, menu, title);
+  }
+  // Pager under the title: Prev only when there is an earlier page,
+  // Next only when a later page exists.
+  if (cur > 1) {
+    ui_menu_add_button(MENU_ATARIAMANIA_PREV, menu, "Previous page...");
+  }
+  if (cur < total) {
+    ui_menu_add_button(MENU_ATARIAMANIA_NEXT, menu, "Next page...");
+  }
+  if (cur > 1 || cur < total) {
+    ui_menu_add_divider(menu);
+  }
+  for (i = 0; i < count; i++) {
+    char row[160];
+    struct menu_item *b;
+    const char *year = atarimania_result_year(i);
+    if (year[0] != '\0') {
+      snprintf(row, sizeof(row), "%s (%s)", atarimania_result_title(i),
+               year);
+    } else {
+      snprintf(row, sizeof(row), "%s", atarimania_result_title(i));
+    }
+    b = ui_menu_add_button(MENU_ATARIAMANIA_RESULT, menu, row);
+    if (b == NULL) {
+      break;
+    }
+    snprintf(b->str_value, sizeof(b->str_value), "%s",
+             atarimania_result_url(i));
+  }
+}
+
+static void atarimania_show_dialog(int searching) {
+  struct menu_item *menu = ui_push_menu(-1, -1);
+  if (menu == NULL) {
+    ui_error("Menu stack is full");
+    return;
+  }
+  menu->on_popped_off = net_dialog_popped;
+  net_dialog_open = 1;
+  atarimania_build_dialog(menu, searching);
+}
+
+// Rebuilds the open dialog in place (pop + push a fresh one). Only valid
+// when called from inside the dialog itself.
+static void atarimania_rebuild_dialog(int searching) {
+  net_rebuilding = 1;
+  ui_pop_menu();
+  atarimania_show_dialog(searching);
+  net_rebuilding = 0;
+}
+
+static void atarimania_run_search(void) {
+  if (atarimania_collection_item == NULL) {
+    return;
+  }
+  // The field owns the text (creation copies the buffer in); sync it
+  // back before starting, so jobs and rebuilds see what was typed.
+  if (atarimania_search_item != NULL) {
+    snprintf(atarimania_query, sizeof(atarimania_query), "%s",
+             atarimania_search_item->str_value);
+  }
+  // Async: the core-0 worker fetches; the pump rebuilds this dialog with
+  // results on completion. Rebuild now to show the searching placeholder.
+  net_trace("run_search pressed");
+  if (!netcheck_job_start_search(atarimania_query,
+                                   atarimania_collection_item->value, 1)) {
+    net_trace("run_search busy rejected");
+    ui_error("A network job is already running");
+    return;
+  }
+  net_armed(NETCHECK_JOB_SEARCH);
+  atarimania_rebuild_dialog(1);
+}
+
+// Turn to another result page: refetch on the worker, the pump rebuilds
+// this dialog with the fresh page on completion.
+static void atarimania_turn_page(int page) {
+  char tline[64];
+  if (atarimania_collection_item == NULL) {
+    return;
+  }
+  if (atarimania_search_item != NULL) {
+    snprintf(atarimania_query, sizeof(atarimania_query), "%s",
+             atarimania_search_item->str_value);
+  }
+  snprintf(tline, sizeof(tline), "turn_page %d pressed", page);
+  net_trace(tline);
+  if (!netcheck_job_start_search(atarimania_query,
+                                   atarimania_collection_item->value,
+                                   page)) {
+    net_trace("turn_page busy rejected");
+    ui_error("A network job is already running");
+    return;
+  }
+  net_armed(NETCHECK_JOB_SEARCH);
+  atarimania_rebuild_dialog(1);
+}
+
 static void select_file(struct menu_item *item) {
   ReuFilenameStatus reu_filename_status;
 
@@ -5787,6 +6319,12 @@ static void select_file(struct menu_item *item) {
       top->prefix[0] = '\0';
       zip_depth++;
       zip_open_level();
+      return;
+    }
+    // Atarimania dump picks carry mixed media: route each entry to the
+    // attach flow matching its extension before extracting.
+    if (item->id == MENU_ATARIAMANIA_DUMP &&
+        atarimania_rewrite_pick(item) < 0) {
       return;
     }
     if (zip_extract_pick(item) < 0) {
@@ -5882,6 +6420,19 @@ static void select_file(struct menu_item *item) {
 	 strcpy (attached_disk_name[unit-8], item->str_value);
        }
        return;
+     case MENU_AMIGA_HDF0_FILE:
+     case MENU_AMIGA_HDF1_FILE: {
+       int hdr = item->id == MENU_AMIGA_HDF0_FILE ? 0 : 1;
+       ui_info("Attaching...");
+       if (emux_attach_hdf_image(hdr, zip_pick_path(DIR_DISKS, item->str_value)) <
+           0) {
+         ui_pop_menu();
+         ui_error("Failed to attach hardfile");
+       } else {
+         ui_pop_all_and_toggle();
+       }
+       return;
+     }
      case MENU_ATARI_DRV_FILE:
        // Atari insert stays in the menu (multi-drive workflow). From
        // inside an archive, relist the archive level instead of popping.
@@ -5906,9 +6457,9 @@ static void select_file(struct menu_item *item) {
            ui_info(attached_msg);
          }
        }
-       emux_atari_sync_drives();
-       return;
-     case MENU_ATARI_SET_SAVE_FILE:
+        emux_atari_sync_drives();
+        return;
+      case MENU_ATARI_SET_SAVE_FILE:
        if (emux_atari_save_set(fullpath(DIR_SNAPS, item->str_value)) < 0) {
          ui_pop_menu();
          ui_error("Failed to save disk set");
@@ -5967,8 +6518,8 @@ static void select_file(struct menu_item *item) {
      case MENU_DRIVE_ROM_FILE_CMDHD:
        if (strcasecmp(current_volume_names[DIR_DRIVE_ROMS],
                       system_volume_name) != 0 ||
-           strcasecmp(current_dir_names[DIR_DRIVE_ROMS], "/drives") != 0) {
-         ui_error("Drive ROMs must be in SYS:/drives");
+           strcasecmp(current_dir_names[DIR_DRIVE_ROMS], "/roms/drives") != 0) {
+         ui_error("Drive ROMs must be in SYS:/roms/drives");
          return;
        }
        if (emux_handle_rom_change(item, fullpath) != 0) {
@@ -6006,7 +6557,7 @@ static void select_file(struct menu_item *item) {
        return;
      case MENU_AUTOSTART_FILE:
        ui_info("Starting...");
-       if (emux_autostart_file(zip_pick_path(DIR_DISKS, item->str_value), 0) < 0) {
+       if (emux_autostart_file(zip_pick_path(DIR_ROOT, item->str_value), 0) < 0) {
          ui_pop_menu();
          ui_error("Failed to autostart file");
        } else {
@@ -6035,7 +6586,27 @@ static void select_file(struct menu_item *item) {
        ui_pop_menu();
        mark_rs232net_dirty();
        return;
-     case MENU_ATARI_CART_FILE:
+     case MENU_ATARI_CART_FILE: {
+       int cart_r = attach_cart(item->id, item);
+       // Positive = size in KB with type UNKNOWN (raw .rom): ask, like
+       // the desktop TUI. Others attach silently as before.
+       if (cart_r > 0) {
+         show_atari_cart_type_menu(cart_r);
+       } else if (cart_r < 0) {
+         ui_error("Failed to attach cartridge image");
+       }
+       return;
+     }
+     case MENU_ATARI_CART_TYPE: {
+       int type = atoi(item->str_value);
+       if (type > 0) {
+         emux_atari_set_cart_type(type);
+         ui_pop_all_and_toggle();
+       } else {
+         ui_pop_menu();
+       }
+       return;
+     }
      case MENU_C64_CART_FILE:
      case MENU_C64_CART_8K_FILE:
      case MENU_C64_CART_16K_FILE:
@@ -6121,6 +6692,8 @@ static void select_file(struct menu_item *item) {
             l3 != snap_filt_ext[0][3] || dot[4] != '\0') {
           if (emux_machine_class == BMC64_MACHINE_CLASS_PLUS4EMU) {
              ui_error("Need .P4S extension");
+          } else if (emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
+             ui_error("Need .ASF extension");
           } else {
              ui_error("Need .VSF extension");
           }
@@ -6229,6 +6802,9 @@ static int menu_file_item_to_dir_index(struct menu_item *item) {
   case MENU_LOADPRG_FILE:
     return DIR_ROOT;
   case MENU_AUTOSTART_FILE:
+    return DIR_ROOT;
+  case MENU_AMIGA_HDF0_FILE:
+  case MENU_AMIGA_HDF1_FILE:
     return DIR_DISKS;
   case MENU_RS232NET_PHONEBOOK_FILE:
     return DIR_PHONEBOOK;
@@ -6404,7 +6980,10 @@ static struct menu_item *relist_files_after_dir_change(int menu_id) {
   case MENU_CREATE_X64_FILE:
   case MENU_CREATE_DHD_FILE:
     return show_files(DIR_DISKS,
-                      emux_machine_class == BMC64_MACHINE_CLASS_ATARI800
+                      emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_AMIGA
                           ? FILTER_NONE
                           : FILTER_DISK,
                       menu_id, 1);
@@ -6415,7 +6994,10 @@ static struct menu_item *relist_files_after_dir_change(int menu_id) {
   case MENU_TAPE_FILE:
   case MENU_CREATE_TAP_FILE:
     return show_files(DIR_TAPES,
-                      emux_machine_class == BMC64_MACHINE_CLASS_ATARI800
+                      emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_AMIGA
                           ? FILTER_NONE
                           : FILTER_TAPE,
                       menu_id, 1);
@@ -6469,6 +7051,9 @@ static struct menu_item *relist_files_after_dir_change(int menu_id) {
   case MENU_DRIVE_ROM_FILE_CMDHD:
     return show_files(DIR_DRIVE_ROMS, FILTER_NONE, menu_id, 1);
   case MENU_AUTOSTART_FILE:
+    return show_files(DIR_ROOT, FILTER_NONE, menu_id, 1);
+  case MENU_AMIGA_HDF0_FILE:
+  case MENU_AMIGA_HDF1_FILE:
     return show_files(DIR_DISKS, FILTER_NONE, menu_id, 1);
   case MENU_LOADPRG_FILE:
     return show_files(DIR_ROOT, FILTER_PRGS, menu_id, 1);
@@ -7383,6 +7968,17 @@ static void apply_startup_crt_preset(int settings_loaded) {
 static void menu_value_changed(struct menu_item *item) {
   int p;
   int quick_slot = menu_quick_access_slot_from_menu_id(item->id);
+  {
+    // Temporary diagnostic: log row activations by id (buttons, folders,
+    // text fields only; toggles/ranges would flood).
+    if (item->type == BUTTON || item->type == FOLDER ||
+        item->type == TEXTFIELD) {
+      char tline[64];
+      snprintf(tline, sizeof(tline), "menu action id=%d type=%d", item->id,
+               item->type);
+      net_trace(tline);
+    }
+  }
 
   if (quick_slot >= 0) {
     if (item->sub_id == MENU_SUB_QUICK_ACCESS_ASSIGN) {
@@ -7538,8 +8134,9 @@ static void menu_value_changed(struct menu_item *item) {
     default_disk_set_drive(item->choice_ints[item->value]);
     return;
   case MENU_AUTOSTART:
-    // Autostart targets drive 8, so share its directory with disk attach.
-    show_files(DIR_DISKS, FILTER_NONE, MENU_AUTOSTART_FILE, 0);
+    // Autostart opens at the platform root (./<PLATFORM>/) so every
+    // content type is one step away; disk attach keeps its own root.
+    show_files(DIR_ROOT, FILTER_NONE, MENU_AUTOSTART_FILE, 0);
     return;
   case MENU_LOADPRG:
     show_files(DIR_ROOT, FILTER_PRGS, MENU_LOADPRG_FILE, 0);
@@ -7634,11 +8231,21 @@ static void menu_value_changed(struct menu_item *item) {
   case MENU_ATTACH_DISK_11:
     // Atari disk images (.atr/.xfd/.atx/...) are not in the VICE disk
     // filter; show everything on the Atari machine.
+    // DOS images are likewise not in the VICE filter.
     show_files(DIR_DISKS,
-               emux_machine_class == BMC64_MACHINE_CLASS_ATARI800
+               emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA
                    ? FILTER_NONE
                    : FILTER_DISK,
                MENU_DISK_FILE, 0);
+    return;
+  case MENU_AMIGA_HDF0:
+    show_files(DIR_DISKS, FILTER_NONE, MENU_AMIGA_HDF0_FILE, 0);
+    return;
+  case MENU_AMIGA_HDF1:
+    show_files(DIR_DISKS, FILTER_NONE, MENU_AMIGA_HDF1_FILE, 0);
     return;
   case MENU_ATARI_DRV_INS_1:
   case MENU_ATARI_DRV_INS_2:
@@ -7683,8 +8290,12 @@ static void menu_value_changed(struct menu_item *item) {
     return;
   case MENU_ATTACH_TAPE:
     // Atari cassettes (.cas) are not in the VICE tape filter.
+    // DOS images are likewise not in the VICE filter.
     show_files(DIR_TAPES,
-               emux_machine_class == BMC64_MACHINE_CLASS_ATARI800
+               emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA
                    ? FILTER_NONE
                    : FILTER_TAPE,
                MENU_TAPE_FILE, 0);
@@ -7879,6 +8490,9 @@ static void menu_value_changed(struct menu_item *item) {
   case MENU_LICENSE_BROADCOM:
   case MENU_LICENSE_LINUX:
   case MENU_LICENSE_ATARI800:
+  case MENU_LICENSE_DOS:
+  case MENU_LICENSE_ATARIST:
+  case MENU_LICENSE_AMIGA:
     show_license_file(find_license_menu_entry(item->id));
     return;
   case MENU_LICENSE_THIRD_PARTY:
@@ -7974,6 +8588,40 @@ static void menu_value_changed(struct menu_item *item) {
     copy_text_field_value(network_wifi_ssid_item, item->str_value);
     ui_pop_menu();
     return;
+  case MENU_NETWORK_TEST_INTERNET: {
+    net_trace("test pressed");
+    if (!netcheck_job_start_test()) {
+      net_trace("test busy rejected");
+      ui_error("A network job is already running");
+      return;
+    }
+    net_armed(NETCHECK_JOB_TEST);
+    ui_info("Testing internet connection...");
+    return;
+  }
+      case MENU_ATARIAMANIA_DIALOG:
+        net_trace("dialog pressed");
+        // Fresh term on every open; rebuilds preserve it via the buffer.
+        atarimania_query[0] = '\0';
+        atarimania_show_dialog(0);
+        return;
+  case MENU_ATARIAMANIA_NEXT:
+    atarimania_turn_page(atarimania_page_current() + 1);
+    return;
+  case MENU_ATARIAMANIA_PREV:
+    atarimania_turn_page(atarimania_page_current() - 1);
+    return;
+  case MENU_ATARIAMANIA_RESULT: {
+    net_trace("result pressed");
+    if (!netcheck_job_start_detail(item->str_value)) {
+      net_trace("result busy rejected");
+      ui_error("A network job is already running");
+      return;
+    }
+    net_armed(NETCHECK_JOB_DETAIL);
+    ui_info("Loading production...");
+    return;
+  }
   case MENU_NETWORK_ADAPTER:
   case MENU_NETWORK_DHCP:
     update_network_address_field_state();
@@ -8355,9 +9003,6 @@ static void menu_value_changed(struct menu_item *item) {
     ui_pop_menu();
     break;
   }
-  case MENU_DIR_CONVENTION:
-    set_current_dir_names();
-    break;
   case MENU_SHADER_ENABLE:
     reveal_crt_shader_preview();
     // Despite what the menu says, don't allow this to enable the shader
@@ -8656,6 +9301,12 @@ static BMC64MachineClass machine_emulator_class(MachineEmulator emulator) {
       return BMC64_MACHINE_CLASS_PET;
     case MACHINE_EMULATOR_ATARI800:
       return BMC64_MACHINE_CLASS_ATARI800;
+    case MACHINE_EMULATOR_DOS:
+      return BMC64_MACHINE_CLASS_DOS;
+    case MACHINE_EMULATOR_ATARIST:
+      return BMC64_MACHINE_CLASS_ATARIST;
+    case MACHINE_EMULATOR_AMIGA:
+      return BMC64_MACHINE_CLASS_AMIGA;
     default:
       return BMC64_MACHINE_CLASS_UNKNOWN;
   }
@@ -8682,6 +9333,9 @@ static const char *machine_emulator_name(MachineEmulator emulator) {
     case MACHINE_EMULATOR_XPLUS4EMU: return "xplus4emu";
     case MACHINE_EMULATOR_XPET: return "xpet";
     case MACHINE_EMULATOR_ATARI800: return "atari800";
+    case MACHINE_EMULATOR_DOS: return "dos";
+    case MACHINE_EMULATOR_ATARIST: return "atarist";
+    case MACHINE_EMULATOR_AMIGA: return "amiga";
     default: return "Unknown";
   }
 }
@@ -8699,6 +9353,9 @@ static MachineEmulator current_machine_emulator(void) {
     case BMC64_MACHINE_CLASS_PLUS4EMU: return MACHINE_EMULATOR_XPLUS4EMU;
     case BMC64_MACHINE_CLASS_PET: return MACHINE_EMULATOR_XPET;
     case BMC64_MACHINE_CLASS_ATARI800: return MACHINE_EMULATOR_ATARI800;
+    case BMC64_MACHINE_CLASS_DOS: return MACHINE_EMULATOR_DOS;
+    case BMC64_MACHINE_CLASS_ATARIST: return MACHINE_EMULATOR_ATARIST;
+    case BMC64_MACHINE_CLASS_AMIGA: return MACHINE_EMULATOR_AMIGA;
     default: return MACHINE_EMULATOR_UNKNOWN;
   }
 }
@@ -8758,7 +9415,8 @@ static void machine_populate_emulators(MachineEmulator preferred) {
       MACHINE_EMULATOR_XSCPU64, MACHINE_EMULATOR_X128,
       MACHINE_EMULATOR_XVIC, MACHINE_EMULATOR_XPLUS4,
       MACHINE_EMULATOR_XPLUS4EMU, MACHINE_EMULATOR_XPET,
-      MACHINE_EMULATOR_ATARI800,
+      MACHINE_EMULATOR_ATARI800, MACHINE_EMULATOR_DOS,
+      MACHINE_EMULATOR_ATARIST, MACHINE_EMULATOR_AMIGA,
   };
   int i;
 
@@ -9486,6 +10144,8 @@ void build_menu(struct menu_item *root) {
 
   if (emux_machine_class == BMC64_MACHINE_CLASS_PLUS4EMU) {
      strcpy(snap_filt_ext[0],".p4s");
+  } else if (emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
+     strcpy(snap_filt_ext[0],".asf");
   } else {
      strcpy(snap_filt_ext[0],".vsf");
   }
@@ -9496,32 +10156,44 @@ void build_menu(struct menu_item *root) {
   switch (emux_machine_class) {
   case BMC64_MACHINE_CLASS_C64:
     strcat(machine_info_txt,"C64 ");
-    strcpy(machine_sub_dir, "/C64");
+    strcpy(machine_sub_dir, "/systems/C64");
     break;
   case BMC64_MACHINE_CLASS_SCPU64:
     strcat(machine_info_txt,"SCPU64 ");
-    strcpy(machine_sub_dir, "/SCPU64");
+    strcpy(machine_sub_dir, "/systems/SCPU64");
     break;
   case BMC64_MACHINE_CLASS_C128:
     strcat(machine_info_txt,"C128 ");
-    strcpy(machine_sub_dir, "/C128");
+    strcpy(machine_sub_dir, "/systems/C128");
     break;
   case BMC64_MACHINE_CLASS_VIC20:
     strcat(machine_info_txt,"VIC20 ");
-    strcpy(machine_sub_dir, "/VIC20");
+    strcpy(machine_sub_dir, "/systems/VIC20");
     break;
   case BMC64_MACHINE_CLASS_PLUS4:
   case BMC64_MACHINE_CLASS_PLUS4EMU:
     strcat(machine_info_txt,"PLUS/4 ");
-    strcpy(machine_sub_dir, "/PLUS4");
+    strcpy(machine_sub_dir, "/systems/PLUS4");
     break;
   case BMC64_MACHINE_CLASS_PET:
     strcat(machine_info_txt,"PET ");
-    strcpy(machine_sub_dir, "/PET");
+    strcpy(machine_sub_dir, "/systems/PET");
     break;
   case BMC64_MACHINE_CLASS_ATARI800:
     strcat(machine_info_txt,"Atari 800 ");
-    strcpy(machine_sub_dir, "/ATARI800");
+    strcpy(machine_sub_dir, "/systems/ATARI800");
+    break;
+  case BMC64_MACHINE_CLASS_DOS:
+    strcat(machine_info_txt,"DOSBox-X ");
+    strcpy(machine_sub_dir, "/systems/DOS");
+    break;
+  case BMC64_MACHINE_CLASS_ATARIST:
+    strcat(machine_info_txt,"Atari ST ");
+    strcpy(machine_sub_dir, "/systems/ATARIST");
+    break;
+  case BMC64_MACHINE_CLASS_AMIGA:
+    strcat(machine_info_txt,"Amiga ");
+    strcpy(machine_sub_dir, "/systems/AMIGA");
     break;
   default:
     strcat(machine_info_txt,"??? ");
@@ -9629,7 +10301,10 @@ void build_menu(struct menu_item *root) {
      break;
     default:
      ui_menu_add_button(MENU_AUTOSTART, root,
-         emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ?
+         (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
+          emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
+          emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
+          emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) ?
          "Autostart..." : "Autostart Prg/Disk...");
      emux_get_int(Setting_AutostartWarp, &tmp);
      ui_menu_add_toggle(MENU_AUTOSTART_WARP, root, "Autostart Warp", tmp);
@@ -9644,10 +10319,16 @@ void build_menu(struct menu_item *root) {
     // (-1) Options applicable to all drives
     emux_add_drive_option(drive_parent, -1);
 
-  if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800) {
+  if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
+      emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
+      emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
+      emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
     // Atari SIO drives D1:-D8: plus disk-set/rotate/blank management are
     // built by the bridge (emux_add_drive_option with drive -1 above);
     // the VICE drive model/IEC/default-disk UI does not apply.
+    // DOS is also a non-VICE core: no VICE drive UI.
+    // ATARIST is also a non-VICE core: no VICE drive UI.
+    // AMIGA is also a non-VICE core: no VICE drive UI (DF0 only).
   } else {
     build_drive_menu(drive_parent, &drive_menu_specs[0]);
 
@@ -9663,12 +10344,18 @@ void build_menu(struct menu_item *root) {
   }
 
   if (emux_machine_class != BMC64_MACHINE_CLASS_PLUS4EMU &&
-      emux_machine_class != BMC64_MACHINE_CLASS_ATARI800) {
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
     ui_menu_add_button(MENU_DRIVE_CHANGE_ROM, drive_parent, "Change ROM...");
   }
 
   if (emux_machine_class != BMC64_MACHINE_CLASS_PLUS4EMU &&
-      emux_machine_class != BMC64_MACHINE_CLASS_ATARI800) {
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
     parent = ui_menu_add_folder(drive_parent, "Create empty Disk");
       ui_menu_add_button(MENU_CREATE_D64, parent, "D64...");
       ui_menu_add_button(MENU_CREATE_D67, parent, "D67...");
@@ -9697,6 +10384,11 @@ void build_menu(struct menu_item *root) {
 
   parent = emux_add_cartridge_options(root);
 
+  // No cassette interface on a PC, an Amiga or an Atari ST; every other
+  // machine keeps its Tape menu.
+  if (emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARIST) {
   parent = ui_menu_add_folder(root, "Tape");
 
     ui_menu_add_button(MENU_ATTACH_TAPE, parent, "Attach tape image...");
@@ -9717,8 +10409,30 @@ void build_menu(struct menu_item *root) {
 
     ui_menu_add_button(MENU_CREATE_TAP, parent, "Create empty Tape...");
     emux_add_tape_options(parent);
+  }
 
   ui_menu_add_divider(root);
+
+  // Online resources (Atari 8-bit only for now).
+  if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800) {
+    struct menu_item *online_parent =
+        ui_menu_add_folder(root, "Online Resources");
+    atarimania_folder_item =
+        ui_menu_add_folder(online_parent, "Atarimania...");
+    atarimania_collection_item = ui_menu_add_multiple_choice(
+        MENU_ATARIAMANIA_COLLECTION, atarimania_folder_item, "Collection");
+    atarimania_collection_item->num_choices = 3;
+    strcpy(atarimania_collection_item->choices[ATARIMANIA_GAMES], "Games");
+    strcpy(atarimania_collection_item->choices[ATARIMANIA_DEMOS], "Demos");
+    strcpy(atarimania_collection_item->choices[ATARIMANIA_UTILS],
+           "Utilities");
+    atarimania_collection_item->value = ATARIMANIA_GAMES;
+    // "Search..." opens the search dialog (a popup window): the term
+    // field sits on the top line, results populate below it.
+    ui_menu_add_button(MENU_ATARIAMANIA_DIALOG, atarimania_folder_item,
+                       "Search...");
+    ui_menu_add_divider(root);
+  }
 
   // TODO: Load/Save snapshot on PET is crashy. Figure out if upstream
   // has fixed this.
@@ -10108,13 +10822,12 @@ void build_menu(struct menu_item *root) {
              1, canvas_state[VIC_INDEX].max_border_h);
   child = h_stretch_item[0] =
       ui_menu_add_range(MENU_H_STRETCH_0, parent, "H Stretch Factor",
-           500, canvas_state[VIC_INDEX].max_stretch_h ?
-              canvas_state[VIC_INDEX].max_stretch_h : 1800,
+           100, 10000,
                  5, defaultHStretch);
   child->divisor = 1000;
   child = v_stretch_item[0] =
       ui_menu_add_range(MENU_V_STRETCH_0, parent, "V Stretch Factor",
-           500, 1000, 5, defaultVStretch);
+           100, 10000, 5, defaultVStretch);
   child->divisor = 1000;
 
   ui_menu_add_button(MENU_INTEGER_SCALE_W_0, parent, "Next H Integer Scale");
@@ -10194,10 +10907,13 @@ void build_menu(struct menu_item *root) {
                      "Custom HDMI/DPI mode timing calc...");
   }
 
-  if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800) {
-     ui_menu_add_button(MENU_ATARI_SCREENSHOT, video_parent,
-                     "Save screenshot (.bmp)");
-  }
+   if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
+       emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
+       emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
+       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
+      ui_menu_add_button(MENU_ATARI_SCREENSHOT, video_parent,
+                      "Save screenshot (.bmp)");
+   }
 
   struct menu_item *sound_parent = ui_menu_add_folder(root, "Sound");
   struct menu_item *sound_output_parent =
@@ -10225,7 +10941,10 @@ void build_menu(struct menu_item *root) {
   struct menu_item *sound_emulation_parent =
       ui_menu_add_folder(sound_parent, "Emulation");
   struct menu_item *sound_sid_parent = NULL;
-  if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800) {
+  if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
     sound_sid_parent = ui_menu_add_folder(sound_parent, "SID");
   }
 
@@ -10247,7 +10966,11 @@ void build_menu(struct menu_item *root) {
   // The mapping editor (machine maps, ISO layouts) and the CBM/CTRL
   // function-key hotkeys are VICE concepts: hidden on the Atari port, which
   // maps F6..F11 in its own keyboard options instead. Monitor stays.
-  if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800) {
+  // DOS is also a non-VICE core.
+  if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
     ui_menu_add_button(MENU_KEYBOARD_EDITOR, parent,
                        "Mapping Editor...");
   }
@@ -10259,7 +10982,10 @@ void build_menu(struct menu_item *root) {
         "Down","Up");
   }
 
-  if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800) {
+  if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
   child = hotkey_cf1_item =
       ui_menu_add_multiple_choice(MENU_HOTKEY_CF1, parent, "C= + F1 Hotkey");
   child->value = HOTKEY_CHOICE_NONE;
@@ -10296,7 +11022,7 @@ void build_menu(struct menu_item *root) {
          "CTRL + F7 Hotkey");
   child->value = HOTKEY_CHOICE_MENU;
   set_hotkey_choices(hotkey_tf7_item);
-  }  // !ATARI800 (CBM/CTRL hotkeys are VICE concepts)
+  }  // !ATARI800 && !DOS && !ATARIST && !AMIGA (CBM/CTRL hotkeys are VICE concepts)
 
   parent = ui_menu_add_folder(root, "Mouse");
   detected_mouse_item = ui_menu_add_button_with_value(
@@ -10495,19 +11221,6 @@ void build_menu(struct menu_item *root) {
 
   reset_confirm_item = ui_menu_add_toggle(MENU_RESET_CONFIRM, parent,
                                           "Confirm Reset from Emulator", 1);
-
-  char emu_folder[16];
-  char folder_emu[16];
-
-  strcpy (emu_folder, machine_sub_dir);
-  strcat (emu_folder, "/dir");
-
-  strcpy (folder_emu, "/dir");
-  strcat (folder_emu, machine_sub_dir);
-
-  dir_convention_item = ui_menu_add_toggle_labels(
-        MENU_DIR_CONVENTION, parent, "Look for files in", 0,
-        folder_emu, emu_folder);
 
   warp_item = ui_menu_add_toggle(MENU_WARP_MODE, root, "Warp Mode", 0);
 

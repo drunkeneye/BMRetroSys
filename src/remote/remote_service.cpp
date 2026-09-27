@@ -105,10 +105,10 @@ bool RemoteService::Start(CNetSubSystem *network)
         } while (log_epoch_ == 0U);
     }
     if ((developer_enabled_ &&
-         (!composite_router_.Mount("/bmx/dev/v1", &router_) ||
-          !composite_router_.Mount("/bmx/dev/ui", &ui_router_))) ||
+         (!composite_router_.Mount("/bmretrosys/dev/v1", &router_) ||
+          !composite_router_.Mount("/bmretrosys/dev/ui", &ui_router_))) ||
         (api_enabled_ &&
-         !composite_router_.Mount("/bmx/api/v1", &api_router_))) {
+         !composite_router_.Mount("/bmretrosys/api/v1", &api_router_))) {
         return false;
     }
 

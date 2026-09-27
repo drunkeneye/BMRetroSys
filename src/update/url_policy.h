@@ -17,7 +17,11 @@ enum class UpdateUrlPurpose : uint8_t {
     Redirect = 2,
     PreparedDraftDiscovery = 3,
     AuthenticatedReleaseAsset = 4,
-    GitHubDeviceAuthorization = 5
+    GitHubDeviceAuthorization = 5,
+    // Atarimania online resources (search/list/detail/dump). Host-limited
+    // to www.atarimania.com; unlike updater purposes the query string is
+    // part of the request (search parameters).
+    Atarimania = 6
 };
 
 enum class UrlPolicyStatus : uint8_t {

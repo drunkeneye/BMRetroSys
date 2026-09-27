@@ -1,7 +1,15 @@
-# BMX8bit 0.1
+# BMRetroSys 0.2
 
-BMX8bit is bare-metal emulation for the Raspberry Pi 4/5 family:
-the Commodore machines of BMX plus an Atari 8-bit port.
+BMRetroSys is bare-metal emulation for the Raspberry Pi 4/5 family:
+ten 8-bit and 16-bit computers on one SD card, no Linux underneath.
+
+| Family | Machines |
+| --- | --- |
+| Commodore 8-bit | C64 (fast + cycle-exact cores), SuperCPU 64, C128, VIC-20, Plus/4, PET — via VICE 3.10 |
+| Atari 8-bit | 400/800/XL/XE/5200 — via atari800 |
+| Atari 16-bit | ST/STE/Mega ST/Mega STE — via Hatari, EmuTOS built in, genuine TOS pool |
+| Amiga | A1000/A500/A500+/A1200 (OCS/ECS/AGA) — via vAmiga, DF0–DF3, HDF hard disks, snapshots |
+| PC 16-bit | 286 DOS — via DOSBox-X |
 
 This is a fork of [BMX](https://github.com/kdre/bmx) at commit
 `81efb7e` (public source export 2026.08.19). All credit for the
@@ -18,16 +26,54 @@ top of that base is mine; upstream history is preserved verbatim in
 > for me, right now, right here.
 
 
+## SD-card layout
+
+One directory per machine under `systems/` (content) and firmware
+pools under `roms/` — the same tree on every install:
+
+```text
+systems/C64/{carts,disks,snapshots,tapes[,prg]}  ... one dir per machine
+systems/AMIGA/{disks,hdf,snapshots}              ... for everything it owns
+systems/ATARIST/{disks,snapshots}                ...
+roms/C64, roms/drives, ...                       ... system ROMs + keymaps
+roms/kick, roms/tos, roms/ATARI800               ... firmware pools
+```
+
+(One folder per machine for everything it owns; shared pools stay
+flat under `roms/`. Case is significant on paper, irrelevant on the
+FAT32 card.)
+
+
+## What changed (0.2)
+
+- Product rename BMX8bit → BMRetroSys (About, logs, SD paths, docs;
+  C identifiers intentionally unchanged).
+- `systems/<machine>/…` content layout + `roms/…` firmware pools, with
+  archive.org ROM fetching (Kickstarts, TOS) and per-machine staging.
+- New machines: Atari ST (Hatari, EmuTOS + genuine TOS selector),
+  Amiga (vAmiga: 5 models, chipset/CPU/memory/Paula options, DF0–DF3,
+  HDF, snapshots, warp, drive clicks), DOS (DOSBox-X).
+- Machine renames HATARI → ATARIST, DOSBOX → DOS across menus,
+  kernels, settings and SD layout.
+- Full list: [`CHANGELOG.md`](CHANGELOG.md).
+
 ## What changed (0.1)
 
-- Atari 8-bit machine powered by vendored atari800 7.2.1
-  (see `THIRD_PARTY_SOURCES.md`).
+- New machines: Atari 8-bit (vendored atari800), Atari ST (vendored
+  Hatari 2.6.1, EmuTOS zero-config + genuine TOS selector), Amiga
+  (vAmiga: 5 models, chipset/CPU/memory/Paula options, DF0–DF3, HDF,
+  snapshots, warp, drive clicks), DOS (DOSBox-X).
 - Automatic firmware ROM download during staging
   (`--download-roms`, on by default): VICE ROMs from zimmers.net,
-  Atari ROMs from FW-Altirra. Files already present are kept;
-  whatever cannot be fetched is reported in `MISSING-ROMS.txt`.
+  Atari ROMs from FW-Altirra, Kickstarts + TOS images from
+  archive.org. Files already present are kept; whatever cannot be
+  fetched is reported in `MISSING-ROMS.txt`.
+- Harmonized SD layout (`systems/<machine>/…`, `roms/…`) with legacy
+  fallbacks removed; per-machine stage script
+  (`build_stage_machine.sh --machine …`); full-tree rebuild keeps all
+  kernels and `machines.ini` in sync.
 - Monitor modes, PAL video blend, BMP screenshots.
-- Sound menu (stereo dual POKEY, HiFi, click, Bienias fix, latency).
+- Sound menus (stereo dual POKEY, HiFi, click, Bienias fix, latency).
 - USB keyboard: fixed F1..F5 console keys, user-mappable F6..F11,
   raw hardware arrow codes; combined hat+analog joysticks.
 - SIO drives D1:..D8:, disk sets, blank ATRs, SIO patch, LEDs.
@@ -37,6 +83,7 @@ top of that base is mine; upstream history is preserved verbatim in
 
 ## What's missing / known issues
 
+- NTSC variants are PAL-only where noted (Amiga video path).
 - Attaching from very large nested archives can hang after
   extraction; under diagnosis, see `CHANGELOG.md`.
 - The SuperCPU binary plus seven drive/PET ROM variants cannot be
@@ -70,7 +117,11 @@ it into the disks folders, just that you have some cool stuff to start with.
   Licenses menu — everything we stand on.
 - atari800 (GPL-2.0) by the Atari800 team; Altirra OS/BASIC for the
   zero-config fallback.
+- Hatari (GPL-2.0) by the Hatari team; EmuTOS for the zero-config TOS.
+- vAmiga (MPL-2.0) by Dirk W. Hoffmann; DiagROM for the no-Kickstart
+  fallback.
+- DOSBox-X for the DOS machine.
 - Atari firmware pool: [FW-Altirra](https://github.com/ascrnet/FW-Altirra).
 - Commodore firmware: [zimmers.net](https://www.zimmers.net/anonftp/pub/cbm/firmware/).
-
-
+- Amiga Kickstarts + Atari TOS images: [archive.org](https://archive.org)
+  (Amiga Demobase / TOSEC collections, fetched at staging time).

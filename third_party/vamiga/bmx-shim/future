@@ -1,0 +1,99 @@
+//
+// bmx-shim/future -- minimal single-threaded <future>.
+//
+// Only std::promise<std::string>/std::future<std::string> are used outside
+// httplib (RshServer/RpcServer blocking exec, never invoked on BMX since
+// servers are never started). Values are stored inline; get() returns the
+// stored value or a default.
+//
+
+#ifndef BMX_VAMIGA_FUTURE
+#define BMX_VAMIGA_FUTURE
+
+#include <exception>
+#include <memory>
+#include <string>
+#include <utility>
+
+namespace std {
+
+template <class T>
+struct bmx_shared_state {
+  bool ready = false;
+  T value{};
+};
+
+template <class T>
+class future {
+  shared_ptr<bmx_shared_state<T>> st;
+
+ public:
+  future() {}
+  explicit future(shared_ptr<bmx_shared_state<T>> s) : st(s) {}
+  future(const future &) = delete;
+  future(future &&) noexcept = default;
+  future &operator=(const future &) = delete;
+  future &operator=(future &&) noexcept = default;
+  T get() {
+    if (st) {
+      return std::move(st->value);
+    }
+    return T{};
+  }
+  bool valid() const noexcept { return (bool)st; }
+  void wait() const {}
+  shared_ptr<bmx_shared_state<T>> state() const { return st; }
+};
+
+template <>
+class future<void> {
+  bool has = false;
+
+ public:
+  future() {}
+  explicit future(bool h) : has(h) {}
+  void get() {}
+  bool valid() const noexcept { return has; }
+  void wait() const {}
+};
+
+template <class T>
+class promise {
+  shared_ptr<bmx_shared_state<T>> st;
+
+ public:
+  promise() : st(make_shared<bmx_shared_state<T>>()) {}
+  promise(const promise &) = delete;
+  promise(promise &&) noexcept = default;
+  promise &operator=(const promise &) = delete;
+  promise &operator=(promise &&) noexcept = default;
+  ~promise() {}
+  future<T> get_future() { return future<T>(st); }
+  void set_value(const T &v) {
+    st->value = v;
+    st->ready = true;
+  }
+  void set_value(T &&v) {
+    st->value = std::move(v);
+    st->ready = true;
+  }
+  void set_exception(exception_ptr) { st->ready = true; }
+  void set_value_at_thread_exit(const T &v) { set_value(v); }
+  void set_value_at_thread_exit(T &&v) { set_value(std::move(v)); }
+};
+
+template <>
+class promise<void> {
+  bool has = true;
+
+ public:
+  promise() {}
+  future<void> get_future() { return future<void>(has); }
+  void set_value() {}
+  void set_exception(exception_ptr) {}
+  void set_value_at_thread_exit() {}
+};
+
+}  // namespace std
+
+#endif  // BMX_VAMIGA_FUTURE

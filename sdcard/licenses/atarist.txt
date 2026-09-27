@@ -1,0 +1,12 @@
+Hatari - Atari ST/STE/TT/Falcon emulator
+Copyright (C) 2001-2026 The Hatari developers (see AUTHORS).
+
+This program is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 2 or later as
+published by the Free Software Foundation.
+
+The vendored Hatari 2.6.1 sources (third_party/hatari/, ST/STE subset)
+carry the full license text in gpl.txt. Details of the subset, the
+bare-metal feature selection and the EmuTOS default TOS are documented in
+THIRD_PARTY_SOURCES.md (staged as /licenses/third_party_sources.txt).
+Source: https://atarist.tuxfamily.org/

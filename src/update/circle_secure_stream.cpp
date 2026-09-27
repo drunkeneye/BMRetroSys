@@ -6,11 +6,13 @@
 #include <circle-mbedtls/tlssimpleclientsocket.h>
 #include <circle-mbedtls/tlssimplesupport.h>
 #include <circle/net/in.h>
+#include <circle/net/ipaddress.h>
 #include <circle/net/netsubsystem.h>
 #include <circle/timer.h>
 #endif
 
 #include <limits.h>
+#include <stdint.h>
 #ifndef BMX_UPDATE_DEADLINE_POLICY_ONLY
 #include <stdio.h>
 #include <string.h>
@@ -59,6 +61,12 @@ namespace {
 
 using CircleMbedTLS::CTLSSimpleClientSocket;
 using CircleMbedTLS::CTLSSimpleSupport;
+
+// Numeric transport override (see header): hostname-matched, SNI and cert
+// verification untouched, only the TCP destination changes.
+char g_override_host[kMaximumUpdateHostBytes];
+CIPAddress g_override_ip;
+bool g_override_set = false;
 
 void SetError(char *error, size_t error_size, const char *message,
               int code = 0) {
@@ -153,6 +161,32 @@ CircleSecureStreamFactory::~CircleSecureStreamFactory() {
     network_ = 0;
 }
 
+void SetVerifiedConnectionOverride(const char *host, const char *numeric_ip) {
+    g_override_host[0] = '\0';
+    g_override_set = false;
+    if (host == 0 || host[0] == '\0' || numeric_ip == 0) {
+        return;
+    }
+    unsigned b[4];
+    int end = 0;
+    if (sscanf(numeric_ip, "%u.%u.%u.%u%n", &b[0], &b[1], &b[2], &b[3],
+               &end) != 4 ||
+        end <= 0 || numeric_ip[end] != '\0' || b[0] > 255 || b[1] > 255 ||
+        b[2] > 255 || b[3] > 255) {
+        return;
+    }
+    const uint8_t bytes[4] = {(uint8_t)b[0], (uint8_t)b[1], (uint8_t)b[2],
+                              (uint8_t)b[3]};
+    snprintf(g_override_host, sizeof(g_override_host), "%s", host);
+    g_override_ip.Set(bytes);
+    g_override_set = !g_override_ip.IsNull();
+}
+
+void ClearVerifiedConnectionOverride(void) {
+    g_override_host[0] = '\0';
+    g_override_set = false;
+}
+
 SecureByteStream *CircleSecureStreamFactory::ConnectVerified(
     const char *host, uint16_t port, char *error, size_t error_size) {
     if (error != 0 && error_size != 0U) error[0] = '\0';
@@ -202,7 +236,15 @@ SecureByteStream *CircleSecureStreamFactory::ConnectVerified(
         }
     }
     status = socket->Setup(host, "BMX updater TLS v1");
-    if (status == 0) status = socket->Connect(host, "443");
+    if (status == 0) {
+        // SNI/verification always use the hostname; only the transport
+        // address may come from the numeric override (DNS fallback).
+        if (g_override_set && strcmp(host, g_override_host) == 0) {
+            status = socket->Connect(g_override_ip, port);
+        } else {
+            status = socket->Connect(host, "443");
+        }
+    }
     if (status != 0) {
         SetError(error, error_size, "verified TLS handshake failed", status);
         delete socket;
