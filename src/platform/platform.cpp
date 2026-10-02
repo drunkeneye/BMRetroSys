@@ -7,8 +7,8 @@ namespace {
 
 namespace path_policy = bmx::update::generated_path_policy_v1;
 
-static_assert(path_policy::kMachineKernelBaseCount == 2U,
-              "platform requires pi4 and pi5 kernel bases");
+static_assert(path_policy::kMachineKernelBaseCount == 3U,
+              "platform requires pi3, pi4 and pi5 kernel bases");
 
 #if RASPPI == 5
 const PlatformDescriptor kPlatform = {
@@ -16,7 +16,15 @@ const PlatformDescriptor kPlatform = {
     5,
     false,
     true,
-    path_policy::kMachineKernelBases[1U],
+    path_policy::kMachineKernelBases[2U],
+};
+#elif RASPPI == 3
+const PlatformDescriptor kPlatform = {
+    "pi3",
+    3,
+    false,
+    false,
+    path_policy::kMachineKernelBases[0U],
 };
 #else
 const PlatformDescriptor kPlatform = {
@@ -24,7 +32,7 @@ const PlatformDescriptor kPlatform = {
     4,
     false,
     false,
-    path_policy::kMachineKernelBases[0U],
+    path_policy::kMachineKernelBases[1U],
 };
 #endif
 

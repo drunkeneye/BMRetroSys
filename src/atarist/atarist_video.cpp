@@ -14,6 +14,7 @@
 
 #include "atarist_video.h"
 #include "atarist_debug.h"
+#include "src/monitor_phosphor.h"
 
 extern "C" {
 #include "third_party/common/circle.h"
@@ -41,11 +42,16 @@ const int kHeight = 576;
 
 unsigned long s_present_count = 0;
 
+// Active CRT monitor type (staged via settings before video_init; the
+// per-pixel mapping below reads it live, so menu changes apply instantly).
+int s_monitor = BMX_MONITOR_COLOR;
+
 uint16_t xrgb_to_565(uint32_t px) {
   uint32_t r = (px >> 16) & 0xff;
   uint32_t g = (px >> 8) & 0xff;
   uint32_t b = px & 0xff;
-  return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+  return bmx_monitor_map_565(
+      (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)), s_monitor);
 }
 
 // ---- Menu color adjustments (brightness/contrast/gamma/tint/saturation)
@@ -128,7 +134,8 @@ uint16_t xrgb32_to_rgb565_adjusted(uint32_t p) {
   const int ri = (int)(clamp01(r) * 31.0f + 0.5f);
   const int gi = (int)(clamp01(g) * 63.0f + 0.5f);
   const int bi = (int)(clamp01(b) * 31.0f + 0.5f);
-  return (uint16_t)((ri << 11) | (gi << 5) | bi);
+  return bmx_monitor_map_565((uint16_t)((ri << 11) | (gi << 5) | bi),
+                             s_monitor);
 }
 
 }  // namespace
@@ -279,6 +286,15 @@ void video_get_color_adjustments(int *brightness, int *contrast, int *gamma,
     *saturation = s_col_sat;
   }
 }
+
+void video_set_monitor(int mode) {
+  if (!bmx_monitor_valid(mode)) {
+    return;
+  }
+  s_monitor = mode;
+}
+
+int video_get_monitor(void) { return s_monitor; }
 
 bool video_save_screenshot(const char *path) {
   if (s_fb == NULL || path == NULL) {

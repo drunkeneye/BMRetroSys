@@ -51,6 +51,14 @@ extern "C" {
 #include "bootstat_atarist.h"
 #elif defined(RASPI_AMIGA)
 #include "bootstat_amiga.h"
+#elif defined(RASPI_ZXSPECTRUM)
+#include "bootstat_zxspectrum.h"
+#elif defined(RASPI_CPC)
+#include "bootstat_cpc.h"
+#elif defined(RASPI_MSX)
+#include "bootstat_msx.h"
+#elif defined(RASPI_A2600)
+#include "bootstat_a2600.h"
 #else
   #error Unknown RASPI_ variant
 #endif
@@ -588,10 +596,15 @@ bool ViceStdioApp::Initialize(void) {
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: bootstat ready");
 
+  // The 2600 needs no network at all (no online resources, no updater,
+  // no remote): skip the WiFi/DHCP bring-up for a fast deterministic boot.
+  // StartRemoteService below degrades gracefully without a network.
+#ifndef RASPI_A2600
   if (mViceOptions.GetNetworkAdapter() == BMX_NETWORK_WIFI &&
       !StartNetwork()) {
     return false;
   }
+#endif
 
   StartRemoteService();
 
@@ -599,8 +612,8 @@ bool ViceStdioApp::Initialize(void) {
   // thread runs scheduler-foreign on the emulator core and must never
   // touch sockets/scheduler directly, so jobs run here instead. Creation
   // must stay in this core-0 boot context. DOSBox-X opts out for now
-  // (no online resources; revisit if needed).
-#ifndef RASPI_DOS
+  // (no online resources; revisit if needed). The 2600 opts out too.
+#if !defined(RASPI_DOS) && !defined(RASPI_A2600)
   netcheck_worker_init(atarimania_job_runner);
 #endif
 #ifdef RASPI_DOS
@@ -614,15 +627,19 @@ bool ViceStdioApp::Initialize(void) {
 
 #if defined(BMC64_USE_EMU_MULTICORE) && \
     !(BMX_PI4_LEGACY_DISPLAY && BMX_EMU_MULTICORE)
+  bmx_set_boot_stage(19);
   mEmulatorCore->LaunchEmulator(mTimingOption);
+  bmx_set_boot_stage(21);
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: emulator launched");
 #endif
+  bmx_set_boot_stage(20);
 
   // This takes 1.5 seconds to init.
   if (!mUSBHCII.Initialize()) {
     return false;
   }
+  bmx_set_boot_stage(30);
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: usb ready");
   return true;

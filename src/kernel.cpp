@@ -119,6 +119,16 @@ static const menu_control_public_binding kVicePublicBindings[] = {
 #undef BMX_REMOTE_CONTROL
 
 extern "C" int emux_prepare_shutdown(void);
+#if RASPPI == 3
+// Circle provides poweroff() only for RASPPI >= 4 (BCM2711 PM_RSTS
+// partition-63 halt). On Pi3 halt the core; the firmware leaves the
+// board in a safe stopped state (same as Circle's halt path).
+extern "C" void poweroff(void) {
+  for (;;) {
+    asm volatile("wfi");
+  }
+}
+#endif
 extern "C" double emux_calculate_fps(void);
 extern "C" int emux_autostart_file(char *filename,
                                     unsigned int program_number);
@@ -384,6 +394,31 @@ int circle_sound_resume(void) {
 void circle_yield(void) {
   // Scheduler guaranteed to be ready before vice calls this.
   static_kernel->circle_yield();
+}
+
+#ifdef BMC64_USE_EMU_MULTICORE
+// Core-0 scheduler liveness (see bmx_core0_tick): bumped every core-0
+// scheduler pass so an emulator core can tell a wedged core 0 apart from
+// dead USB hardware.
+static volatile unsigned long g_core0_tick = 0;
+#endif
+
+unsigned long bmx_core0_tick(void) {
+#ifdef BMC64_USE_EMU_MULTICORE
+  return (unsigned long)__atomic_load_n(&g_core0_tick, __ATOMIC_RELAXED);
+#else
+  return 0;
+#endif
+}
+
+static volatile unsigned long g_boot_stage = 0;
+
+void bmx_set_boot_stage(unsigned long stage) {
+  __atomic_store_n(&g_boot_stage, stage, __ATOMIC_RELAXED);
+}
+
+unsigned long bmx_get_boot_stage(void) {
+  return (unsigned long)__atomic_load_n(&g_boot_stage, __ATOMIC_RELAXED);
 }
 
 #if BMX_V3D_RENDER_TEST_KERNEL
@@ -1524,6 +1559,7 @@ void CKernel::RunCore0Scheduler(void) {
     ProcessCore0Request();
 #endif
 
+    __atomic_add_fetch(&g_core0_tick, 1U, __ATOMIC_RELAXED);
     // Circle tasks can become runnable without publishing an inter-core
     // event.  Keep yielding cooperatively; do not wait on WFE here.
 #if BMX_PI4_CORE0_DISPATCHER && BMX_SID_DIAGNOSTICS
@@ -1552,6 +1588,7 @@ ViceApp::TShutdownMode CKernel::Run(void) {
   printf("boot: setup usb gamepads enter\r\n");
   SetupUSBGamepads();
   printf("boot: setup usb gamepads ready\r\n");
+  bmx_set_boot_stage(40);
 
 #ifndef BMC64_USE_EMU_MULTICORE
   ApplyUSBDeviceInfo();
@@ -2033,11 +2070,17 @@ void CKernel::SubmitCore0Request(Core0Command command) {
 bool CKernel::ShouldDispatchPi4LegacyDisplayCall() const {
   const unsigned core = CMultiCoreSupport::ThisCore();
   assert(core == 0 || core == 1);
+#if RASPPI == 4
   // The first native present remains a Pi4 hardware handover on Core 0.  Once
   // that one-way transition is committed, runtime framebuffer and capture
   // operations have the same Core-1 ownership as Pi5.  A disabled or failed
   // takeover keeps the legacy DispmanX bridge on Core 0.
   return core == 1 && !pi4kms::NativeScanoutCommitted();
+#else
+  // Pi3: pure firmware dispmanx bridge always lives on Core 0; there is no
+  // native takeover, so Core 1 always dispatches.
+  return core == 1;
+#endif
 }
 
 void CKernel::ProcessCore0Request() {
@@ -3441,6 +3484,22 @@ void CKernel::circle_boot_complete() {
     PublishCurrentSoundOutput();
 #endif
   }
+  // Self-healing: a failed first Playback (e.g. HDMI audio racing display
+  // bring-up at boot) leaves a silent machine forever, because nothing
+  // re-arms it. Retry here while inactive; Playback tears down first, so
+  // this is a no-op for already-playing devices. Polled by per-machine
+  // sound watchdogs, so recovery follows within seconds.
+  if (mViceSound && !mViceSound->PlaybackActive()) {
+#ifdef BMC64_USE_EMU_MULTICORE
+    circle_lock_acquire();
+#endif
+    mViceSound->Playback(vol_percent_to_vchiq(mVolume), mNumSoundChannels,
+                         mSoundOutputPriority);
+    PublishCurrentSoundOutput();
+#ifdef BMC64_USE_EMU_MULTICORE
+    circle_lock_release();
+#endif
+  }
 
   DisableBootStat();
 
@@ -3480,9 +3539,14 @@ int CKernel::circle_shader_backend_available_for_layer(int layer) {
 
 int CKernel::circle_status_layer_can_coexist_with_ui() {
 #if BMX_PI4_LEGACY_DISPLAY
+#if RASPPI == 4
   // The firmware/DispmanX composition cannot safely display the status layer
   // together with the menu.  Native KMS owns both as independent HVS planes.
   return pi4kms::NativeScanoutCommitted() ? 1 : 0;
+#else
+  // Pi3: pure firmware dispmanx, no native planes.
+  return 0;
+#endif
 #else
   return 1;
 #endif
@@ -3557,12 +3621,14 @@ void CKernel::PresentFrameBufferLayers(uint32_t readyMask, int sync) {
   const uint32_t present_started_us = CTimer::GetClockTicks();
 #endif
 #if BMX_PI4_LEGACY_DISPLAY
+#if RASPPI == 4
   // Fence the previously submitted native list before FrameReady reuses its
   // old V3D/overlay buffers.  The current list is queued asynchronously after
   // rendering, so each frame is preserved without a post-submit VBlank stall.
   if (!pi4kms::SynchronizePreviousPresent(sync != 0)) {
     return;
   }
+#endif
 #endif
 #if BMX_PI4_CORE0_DISPATCHER && BMX_SID_DIAGNOSTICS
   const uint32_t fence_done_us = CTimer::GetClockTicks();

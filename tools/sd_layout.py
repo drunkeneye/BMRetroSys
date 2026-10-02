@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LAYOUT_PATH = ROOT / "sd-layout.toml"
 FORMAT = "bmx-sd-layout-v1"
 SOURCE_INVENTORY_FORMAT = "bmx-sd-source-inventory-v1"
-BOARDS = ("pi4", "pi5")
+BOARDS = ("pi3", "pi4", "pi5")
 SCOPES = ("both", *BOARDS)
 PROFILES = ("release", "debug")
 MODES = ("config", "kernel", "keep", "metadata", "replace")
@@ -204,8 +204,10 @@ class LayoutRule:
     enabled: bool = True
     report_missing: bool = True
     review_disabled_for: tuple[str, ...] = ()
+    review_exclude_pi3: tuple[str, ...] = ()
     review_exclude_pi4: tuple[str, ...] = ()
     review_exclude_pi5: tuple[str, ...] = ()
+    review_move_pi3: str | None = None
     review_move_pi4: str | None = None
     review_move_pi5: str | None = None
 
@@ -336,14 +338,15 @@ def _parse_rule(
         value = _exact_keys(
             raw, {"mode", "to"}, f"{scope}.file[{ordinal}]",
             optional=common_optional | {
-                "from", "review_move_pi4", "review_move_pi5",
+                "from", "review_move_pi3", "review_move_pi4", "review_move_pi5",
             },
         )
     elif kind == "tree":
         value = _exact_keys(
             raw, {"mode", "to"}, f"{scope}.tree[{ordinal}]",
             optional=common_optional | {
-                "exclude", "from", "include", "review_exclude_pi4",
+                "exclude", "from", "include", "review_exclude_pi3",
+                "review_exclude_pi4",
                 "review_exclude_pi5",
             },
         )
@@ -411,6 +414,7 @@ def _parse_rule(
         )
         if "review_disabled_for" in value else ()
     )
+    review_exclude_pi3 = ()
     review_exclude_pi4 = ()
     review_exclude_pi5 = ()
     if kind == "tree":
@@ -427,10 +431,16 @@ def _parse_rule(
                 )
                 if field in value else ()
             )
-            if board_name == "pi4":
+            if board_name == "pi3":
+                review_exclude_pi3 = parsed
+            elif board_name == "pi4":
                 review_exclude_pi4 = parsed
             else:
                 review_exclude_pi5 = parsed
+    review_move_pi3 = (
+        _fat_path(value["review_move_pi3"], f"{where}.review_move_pi3")
+        if "review_move_pi3" in value else None
+    )
     review_move_pi4 = (
         _fat_path(value["review_move_pi4"], f"{where}.review_move_pi4")
         if "review_move_pi4" in value else None
@@ -447,16 +457,18 @@ def _parse_rule(
         _fail(f"{where} uses optional without a source")
     if review_disabled_for and scope != "both":
         _fail(f"{where}.review_disabled_for is valid only in scope both")
-    if (review_exclude_pi4 or review_exclude_pi5) and scope != "both":
+    if (review_exclude_pi3 or review_exclude_pi4 or review_exclude_pi5) and scope != "both":
         _fail(f"{where} board-specific review excludes require scope both")
-    if review_move_pi4 is not None or review_move_pi5 is not None:
+    if review_move_pi3 is not None or review_move_pi4 is not None or review_move_pi5 is not None:
         if kind != "file" or source is None:
             _fail(f"{where} board review moves require one staged file rule")
-        if scope == "pi4" and review_move_pi5 is not None:
-            _fail(f"{where}.review_move_pi5 conflicts with pi4 scope")
-        if scope == "pi5" and review_move_pi4 is not None:
-            _fail(f"{where}.review_move_pi4 conflicts with pi5 scope")
-        if review_move_pi4 == target or review_move_pi5 == target:
+        if scope == "pi3" and (review_move_pi4 is not None or review_move_pi5 is not None):
+            _fail(f"{where}.review_move conflicts with pi3 scope")
+        if scope == "pi4" and (review_move_pi3 is not None or review_move_pi5 is not None):
+            _fail(f"{where}.review_move conflicts with pi4 scope")
+        if scope == "pi5" and (review_move_pi3 is not None or review_move_pi4 is not None):
+            _fail(f"{where}.review_move conflicts with pi5 scope")
+        if review_move_pi3 == target or review_move_pi4 == target or review_move_pi5 == target:
             _fail(f"{where} review move must differ from to")
     return LayoutRule(
         scope=scope, kind=kind, ordinal=ordinal, target=target, mode=mode,
@@ -464,8 +476,10 @@ def _parse_rule(
         features=features, optional=optional, enabled=enabled,
         report_missing=report_missing,
         review_disabled_for=review_disabled_for,
+        review_exclude_pi3=review_exclude_pi3,
         review_exclude_pi4=review_exclude_pi4,
         review_exclude_pi5=review_exclude_pi5,
+        review_move_pi3=review_move_pi3,
         review_move_pi4=review_move_pi4,
         review_move_pi5=review_move_pi5,
     )
@@ -540,6 +554,8 @@ def _applies(rule: LayoutRule, board: str, profile: str, features: set[str]) -> 
 
 
 def _effective_target(rule: LayoutRule, board: str) -> str:
+    if board == "pi3" and rule.review_move_pi3 is not None:
+        return rule.review_move_pi3
     if board == "pi4" and rule.review_move_pi4 is not None:
         return rule.review_move_pi4
     if board == "pi5" and rule.review_move_pi5 is not None:
@@ -717,6 +733,10 @@ def _validate_static_layout(layout: SdLayout) -> None:
                 )
             seen[key] = rule
     for rule in layout.rules:
+        if rule.review_move_pi3 is not None:
+            _ensure_review_move_allowed(
+                layout, rule, "pi3", rule.review_move_pi3,
+            )
         if rule.review_move_pi4 is not None:
             _ensure_review_move_allowed(
                 layout, rule, "pi4", rule.review_move_pi4,
@@ -855,7 +875,9 @@ def _selected_by_tree(
 ) -> bool:
     included = not rule.include or any(_matches_glob(relative, item) for item in rule.include)
     excludes = list(rule.exclude)
-    if board == "pi4":
+    if board == "pi3":
+        excludes.extend(rule.review_exclude_pi3)
+    elif board == "pi4":
         excludes.extend(rule.review_exclude_pi4)
     elif board == "pi5":
         excludes.extend(rule.review_exclude_pi5)
@@ -1274,9 +1296,12 @@ def _tree_exclusion_details(
     rule: LayoutRule, relative: str, board: str,
 ) -> tuple[list[str], bool, str | None]:
     base_matches = [item for item in rule.exclude if _matches_glob(relative, item)]
-    review_values = (
-        rule.review_exclude_pi4 if board == "pi4" else rule.review_exclude_pi5
-    )
+    if board == "pi3":
+        review_values = rule.review_exclude_pi3
+    elif board == "pi4":
+        review_values = rule.review_exclude_pi4
+    else:
+        review_values = rule.review_exclude_pi5
     review_matches = [item for item in review_values if _matches_glob(relative, item)]
     reasons: list[str] = []
     if base_matches:
@@ -1951,6 +1976,8 @@ def _validate_device_mode_consistency(layout: SdLayout) -> None:
         if rule.kind != "file" or "*" in rule.target or "?" in rule.target:
             continue
         exact_targets.add(rule.target)
+        if rule.review_move_pi3 is not None:
+            exact_targets.add(rule.review_move_pi3)
         if rule.review_move_pi4 is not None:
             exact_targets.add(rule.review_move_pi4)
         if rule.review_move_pi5 is not None:
@@ -2112,6 +2139,8 @@ def with_stage_path_mode(
     )
     changed_tree = dataclasses.replace(rule, exclude=exclusions)
     disabled_for = set(rule.review_disabled_for)
+    if any(_matches_glob(relative, item) for item in rule.review_exclude_pi3):
+        disabled_for.add("pi3")
     if any(_matches_glob(relative, item) for item in rule.review_exclude_pi4):
         disabled_for.add("pi4")
     if any(_matches_glob(relative, item) for item in rule.review_exclude_pi5):
@@ -2195,10 +2224,7 @@ def with_stage_path_enabled(
     relative = target[len(rule.target) + 1:]
     board_specific = scope in BOARDS and rule.scope == "both"
     if board_specific:
-        excludes = set(
-            rule.review_exclude_pi4 if scope == "pi4"
-            else rule.review_exclude_pi5
-        )
+        excludes = set(getattr(rule, f"review_exclude_{scope}"))
     else:
         excludes = set(rule.exclude)
     if enabled:
@@ -2207,9 +2233,7 @@ def with_stage_path_enabled(
         excludes.add(relative)
     if board_specific:
         field = (
-            {"review_exclude_pi4": tuple(sorted(excludes))}
-            if scope == "pi4"
-            else {"review_exclude_pi5": tuple(sorted(excludes))}
+            {f"review_exclude_{scope}": tuple(sorted(excludes))}
         )
         return _replace_rule(layout, rule, dataclasses.replace(rule, **field))
     return _replace_rule(
@@ -2254,8 +2278,7 @@ def with_stage_path_moved(
         )
         if scope in BOARDS and rule.scope == "both":
             field = (
-                "review_exclude_pi4" if scope == "pi4"
-                else "review_exclude_pi5"
+                f"review_exclude_{scope}"
             )
             exclusions = tuple(sorted({*getattr(rule, field), relative}))
             changed_tree = dataclasses.replace(rule, **{field: exclusions})
@@ -2344,6 +2367,7 @@ def stage_override_records(layout: SdLayout) -> tuple[StageOverride, ...]:
                 rule.provenance,
             ))
         for board, patterns in (
+            ("pi3", rule.review_exclude_pi3),
             ("pi4", rule.review_exclude_pi4),
             ("pi5", rule.review_exclude_pi5),
         ):
@@ -2353,6 +2377,7 @@ def stage_override_records(layout: SdLayout) -> tuple[StageOverride, ...]:
                     rule.provenance,
                 ))
         for board, moved in (
+            ("pi3", rule.review_move_pi3),
             ("pi4", rule.review_move_pi4),
             ("pi5", rule.review_move_pi5),
         ):
@@ -2411,10 +2436,14 @@ def _render_rule(rule: LayoutRule) -> list[str]:
         lines.append("report_missing = false")
     if rule.review_disabled_for:
         lines.append(f"review_disabled_for = {_array(rule.review_disabled_for)}")
+    if rule.review_exclude_pi3:
+        lines.append(f"review_exclude_pi3 = {_array(rule.review_exclude_pi3)}")
     if rule.review_exclude_pi4:
         lines.append(f"review_exclude_pi4 = {_array(rule.review_exclude_pi4)}")
     if rule.review_exclude_pi5:
         lines.append(f"review_exclude_pi5 = {_array(rule.review_exclude_pi5)}")
+    if rule.review_move_pi3 is not None:
+        lines.append(f"review_move_pi3 = {_quote(rule.review_move_pi3)}")
     if rule.review_move_pi4 is not None:
         lines.append(f"review_move_pi4 = {_quote(rule.review_move_pi4)}")
     if rule.review_move_pi5 is not None:
@@ -2435,10 +2464,10 @@ def render_sd_layout(layout: SdLayout) -> str:
     return "\n".join(lines) + "\n"
 
 
-_RULE_HEADER_RE = re.compile(r"^\[\[(both|pi4|pi5)\.(file|tree|directory)\]\]$")
+_RULE_HEADER_RE = re.compile(r"^\[\[(both|pi3|pi4|pi5)\.(file|tree|directory)\]\]$")
 _MUTABLE_KEY_RE = re.compile(
-    r"^\s*(?:exclude|enabled|review_disabled_for|review_exclude_pi4|"
-    r"review_exclude_pi5|review_move_pi4|review_move_pi5)\s*="
+    r"^\s*(?:exclude|enabled|review_disabled_for|review_exclude_pi3|review_exclude_pi4|"
+    r"review_exclude_pi5|review_move_pi3|review_move_pi4|review_move_pi5)\s*="
 )
 _MODE_LINE_RE = re.compile(
     r'^(?P<prefix>\s*mode\s*=\s*)(?P<quote>["\'])'
@@ -2473,8 +2502,10 @@ def _review_neutral(rule: LayoutRule) -> LayoutRule:
         exclude=(),
         enabled=True,
         review_disabled_for=(),
+        review_exclude_pi3=(),
         review_exclude_pi4=(),
         review_exclude_pi5=(),
+        review_move_pi3=None,
         review_move_pi4=None,
         review_move_pi5=None,
     )
@@ -2492,10 +2523,14 @@ def _review_lines(rule: LayoutRule) -> list[str]:
         result.append("enabled = false")
     if rule.review_disabled_for:
         result.append(f"review_disabled_for = {_array(rule.review_disabled_for)}")
+    if rule.review_exclude_pi3:
+        result.append(f"review_exclude_pi3 = {_array(rule.review_exclude_pi3)}")
     if rule.review_exclude_pi4:
         result.append(f"review_exclude_pi4 = {_array(rule.review_exclude_pi4)}")
     if rule.review_exclude_pi5:
         result.append(f"review_exclude_pi5 = {_array(rule.review_exclude_pi5)}")
+    if rule.review_move_pi3 is not None:
+        result.append(f"review_move_pi3 = {_quote(rule.review_move_pi3)}")
     if rule.review_move_pi4 is not None:
         result.append(f"review_move_pi4 = {_quote(rule.review_move_pi4)}")
     if rule.review_move_pi5 is not None:

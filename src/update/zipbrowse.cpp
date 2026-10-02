@@ -75,13 +75,28 @@ struct FileSink : public bmx::update::ZipExtractSink {
   }
 };
 
-int fail(char *err, size_t errsz, ZipStatus st) {  if (err != NULL && errsz > 0) {
-    const char *detail = g_reader.FirstFailurePath();
-    if (detail != NULL && detail[0] != '\0') {
-      snprintf(err, errsz, "%s: %s", ZipStatusString(st), detail);
+int fail(char *err, size_t errsz, ZipStatus st) {
+  if (err == NULL || errsz == 0) {
+    return (int)st;
+  }
+  const char *detail = g_reader.FirstFailurePath();
+  const bool has_detail = detail != NULL && detail[0] != '\0';
+  if (st == ZipStatus::UnsupportedFlags) {
+    // Name the offending bits: bit 0 (encryption) is the common real-world
+    // case and deserves plain text (passwords are unsupported).
+    const unsigned flags = g_reader.FirstFailureFlags();
+    if ((flags & 0x0001U) != 0U) {
+      snprintf(err, errsz, "ZIP archive is encrypted (passwords "
+                           "unsupported)%s%s",
+               has_detail ? ": " : "", has_detail ? detail : "");
     } else {
-      snprintf(err, errsz, "%s", ZipStatusString(st));
+      snprintf(err, errsz, "%s (0x%04x)%s%s", ZipStatusString(st), flags,
+               has_detail ? ": " : "", has_detail ? detail : "");
     }
+  } else if (has_detail) {
+    snprintf(err, errsz, "%s: %s", ZipStatusString(st), detail);
+  } else {
+    snprintf(err, errsz, "%s", ZipStatusString(st));
   }
   return (int)st;
 }
@@ -281,6 +296,9 @@ int zipbrowse_extract(const char *entry_path, const char *out_abs_path,
     return fail(err, errsz, ZipStatus::EntryNotFound);
   }
   FileSink sink;
+  // Remove-then-write (same reason as extract_all): never rely on
+  // truncating whatever a previous extract left behind.
+  remove(out_abs_path);
   sink.fp = fopen(out_abs_path, "wb");
   if (sink.fp == NULL) {
     if (err != NULL && errsz > 0) snprintf(err, errsz, "cannot write file");
@@ -344,6 +362,125 @@ int zipbrowse_extract(const char *entry_path, const char *out_abs_path,
   if (st != ZipStatus::Ok || !sink.ok) {
     remove(out_abs_path);
     return fail(err, errsz, st);
+  }
+  return 0;
+}
+
+// Manifest covering the whole open inventory (ExtractOne demands exact
+// file/dir counts). Shared by single and full extraction.
+static void build_full_manifest(size_t *out_files, size_t *out_dirs) {
+  const bmx::update::ZipInventory &inv = g_reader.inventory();
+  size_t nf = 0, nd = 0;
+  for (size_t i = 0; i < inv.entry_count; i++) {
+    if (inv.entries[i].is_directory) {
+      if (nd >= ZIPBROWSE_MAX_ENTRIES) break;
+      g_manifest_dirs[nd++] = inv.entries[i].path;
+    } else {
+      if (nf >= ZIPBROWSE_MAX_ENTRIES) break;
+      g_manifest_files[nf].path = inv.entries[i].path;
+      g_manifest_files[nf].size = inv.entries[i].size;
+      g_manifest_files[nf].compression = inv.entries[i].compression;
+      g_manifest_files[nf].sha256 = NULL;
+      nf++;
+    }
+  }
+  if (out_files != NULL) *out_files = nf;
+  if (out_dirs != NULL) *out_dirs = nd;
+}
+
+int zipbrowse_extract_all(const char *out_abs_dir, char *err, size_t errsz) {
+  if (!g_open || out_abs_dir == NULL || out_abs_dir[0] == '\0') {
+    return fail(err, errsz, ZipStatus::InvalidArgument);
+  }
+  const bmx::update::ZipInventory &inv = g_reader.inventory();
+  size_t total_files = 0;
+  for (size_t i = 0; i < inv.entry_count; i++) {
+    if (!inv.entries[i].is_directory) total_files++;
+  }
+  if (zipbrowse_mkdir_chain(out_abs_dir) != 0) {
+    if (err != NULL && errsz > 0) snprintf(err, errsz, "cannot write file");
+    return -1;
+  }
+  // No SHA-256 available for ad-hoc archives; CRC + sizes are still
+  // verified on the writing pass (same contract as single extraction).
+  size_t nf = 0, nd = 0;
+  build_full_manifest(&nf, &nd);
+  ZipExpectedInventory expected;
+  expected.files = g_manifest_files;
+  expected.file_count = nf;
+  expected.directories = g_manifest_dirs;
+  expected.directory_count = nd;
+  ExtractUi ui;
+  ui.active = (ui_update_progress_begin() != 0);
+  ui.next_pump = 0;
+  if (ui.active) {
+    ui_update_progress_set_title("Extracting archive...");
+  }
+  size_t done_files = 0;
+  ZipStatus first_error = ZipStatus::Ok;
+  for (size_t i = 0; i < inv.entry_count; i++) {
+    const ZipEntry &entry = inv.entries[i];
+    if (entry.is_directory) {
+      char dirpath[512];
+      snprintf(dirpath, sizeof(dirpath), "%s/%s", out_abs_dir, entry.path);
+      zipbrowse_mkdir_chain(dirpath);
+      continue;
+    }
+    char out[512];
+    snprintf(out, sizeof(out), "%s/%s", out_abs_dir, entry.path);
+    {
+      char parent[512];
+      char *last;
+      snprintf(parent, sizeof(parent), "%s", out);
+      last = strrchr(parent, '/');
+      if (last != NULL) {
+        *last = '\0';
+        zipbrowse_mkdir_chain(parent);
+      }
+    }
+    // Remove-then-write: never rely on truncating an existing file, so a
+    // re-extract over a stale cache cannot trip on whatever is there.
+    remove(out);
+    FileSink sink;
+    sink.fp = fopen(out, "wb");
+    if (sink.fp == NULL) {
+      first_error = ZipStatus::InvalidArgument;
+      if (err != NULL && errsz > 0) snprintf(err, errsz, "cannot write file");
+      break;
+    }
+    ui.next_pump = 0;
+    ZipStatus st = g_reader.ExtractOneSinglePass(
+        entry.path, expected, &sink, ExtractVerifyCallback, &ui,
+        ExtractStreamCallback, &ui);
+    fclose(sink.fp);
+    sink.fp = NULL;
+    if (st != ZipStatus::Ok || !sink.ok) {
+      remove(out);
+      first_error = st != ZipStatus::Ok ? st : ZipStatus::SinkError;
+      break;
+    }
+    done_files++;
+    {
+      char line[192];
+      snprintf(line, sizeof(line), "extract-all %u/%u %s",
+               (unsigned)done_files, (unsigned)total_files, entry.path);
+      zipbrowse_trace(line);
+    }
+    if (ui.active) {
+      const unsigned permille = total_files != 0U
+          ? (unsigned)((done_files * 1000U) / total_files) : 1000U;
+      ui_update_progress_present(2 /* Zip */, permille, 1, 1, 0);
+      if (ui_update_progress_pump() != 0) {
+        first_error = ZipStatus::Cancelled;
+        break;
+      }
+    }
+  }
+  if (ui.active) {
+    ui_update_progress_end();
+  }
+  if (first_error != ZipStatus::Ok) {
+    return fail(err, errsz, first_error);
   }
   return 0;
 }

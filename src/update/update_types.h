@@ -12,7 +12,8 @@ static const size_t kSha256DigestBytes = 32U;
 enum class BoardFamily : uint8_t {
     Unknown = 0,
     Pi4Pi400 = 1,
-    Pi5Pi500 = 2
+    Pi5Pi500 = 2,
+    Pi3 = 3
 };
 
 enum class ReleaseChannel : uint8_t {

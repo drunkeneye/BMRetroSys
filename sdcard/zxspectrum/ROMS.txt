@@ -1,0 +1,17 @@
+ZX Spectrum system ROMs (/roms/ZXSPECTRUM on the SD card).
+
+These ship with the kernel image (staged from the vendored ZEsarUX tree)
+and never need to be fetched:
+
+  48.rom        Spectrum 48k
+  128.rom       Spectrum 128k
+  p2.rom        Spectrum +2
+  p2a40.rom     Spectrum +2A (v4.0)
+  p2a41.rom     Spectrum +3 (v4.1)
+  pentagon.rom  Pentagon 128
+  inves.rom     Inves Spectrum+
+  opense.rom    OpenSE Basic clone (fallback)
+  sebasic4_rom1.rom  SE-Basic IV (fallback)
+
+Genuine Sinclair ROMs: place files with the exact names above into
+/roms/ZXSPECTRUM/ to override the stock set.

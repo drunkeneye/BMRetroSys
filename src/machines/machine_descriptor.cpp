@@ -14,7 +14,7 @@ constexpr MachineDescriptor kC64 = {
     "/roms/C64",
     "/systems/C64/disks",
     "/roms/C64/bootstat.txt",
-    "",
+    ".c64",
     "/roms/C64/rpi_pos_de.vkm",
     {1025700, 1026611, 982800, 984404, 982800},
     false,
@@ -25,7 +25,7 @@ constexpr MachineDescriptor kC64 = {
 
 constexpr MachineDescriptor kScpu64 = {
     MachineId::SCPU64,
-    "SCPU64",
+    "SuperCPU 64",
     "/roms/SCPU64",
     "/systems/SCPU64/disks",
     "/roms/SCPU64/bootstat.txt",
@@ -55,7 +55,7 @@ constexpr MachineDescriptor kC128 = {
 
 constexpr MachineDescriptor kVIC20 = {
     MachineId::VIC20,
-    "VIC20",
+    "VIC-20",
     "/roms/VIC20",
     "/systems/VIC20/disks",
     "/roms/VIC20/bootstat.txt",
@@ -113,9 +113,9 @@ constexpr MachineDescriptor kAtari800 = {
     nullptr,
 };
 
-constexpr MachineDescriptor kDosboxx = {
+constexpr MachineDescriptor kDos = {
     MachineId::DOS,
-    "DOSBox-X",
+    "MS-DOS",
     "/roms/DOS",
     "/systems/DOS/disks",
     "/roms/DOS/bootstat.txt",
@@ -129,9 +129,9 @@ constexpr MachineDescriptor kDosboxx = {
     nullptr,
 };
 
-constexpr MachineDescriptor kHatari = {
+constexpr MachineDescriptor kAtariSt = {
     MachineId::ATARIST,
-    "ATARIST",
+    "Atari ST",
     "/roms/ATARIST",
     "/systems/ATARIST/disks",
     "/roms/ATARIST/bootstat.txt",
@@ -161,6 +161,70 @@ constexpr MachineDescriptor kAmiga = {
     nullptr,
 };
 
+constexpr MachineDescriptor kZxSpectrum = {
+    MachineId::ZXSPECTRUM,
+    "ZX Spectrum",
+    "/roms/ZXSPECTRUM",
+    "/systems/ZXSPECTRUM/disks",
+    "/roms/ZXSPECTRUM/bootstat.txt",
+    ".zxspectrum",
+    nullptr,
+    // Z80 3.5MHz (PAL 50Hz frame clock).
+    {3500000, 3500000, 3500000, 3500000, 3500000},
+    false,
+    false,
+    nullptr,
+    nullptr,
+};
+
+constexpr MachineDescriptor kCpc = {
+    MachineId::CPC,
+    "Amstrad CPC",
+    "/roms/CPC",
+    "/systems/CPC/disks",
+    "/roms/CPC/bootstat.txt",
+    ".cpc",
+    nullptr,
+    // Z80 4MHz nominal (PAL 50Hz frame clock, 19.968ms frames).
+    {4000000, 4000000, 4000000, 4000000, 4000000},
+    false,
+    false,
+    nullptr,
+    nullptr,
+};
+
+constexpr MachineDescriptor kMsx = {
+    MachineId::MSX,
+    "MSX",
+    "/roms/MSX",
+    "/systems/MSX",
+    "/roms/MSX/bootstat.txt",
+    ".msx",
+    nullptr,
+    // Z80 3.579545MHz nominal (PAL 50Hz frame clock).
+    {3579545, 3579545, 3579545, 3579545, 3579545},
+    false,
+    false,
+    nullptr,
+    nullptr,
+};
+
+constexpr MachineDescriptor kA2600 = {
+    MachineId::A2600,
+    "Atari 2600",
+    "/systems/A2600",
+    "/systems/A2600",
+    "/systems/A2600/bootstat.txt",
+    ".a2600",
+    nullptr,
+    // 6507 1.19MHz nominal (no BIOS ROM pool on a 2600).
+    {1190476, 1190476, 1190476, 1190476, 1190476},
+    false,
+    false,
+    nullptr,
+    nullptr,
+};
+
 }  // namespace
 
 const MachineDescriptor &CurrentMachine() {
@@ -179,11 +243,19 @@ const MachineDescriptor &CurrentMachine() {
 #elif defined(RASPI_ATARI800)
   return kAtari800;
 #elif defined(RASPI_DOS)
-  return kDosboxx;
+  return kDos;
 #elif defined(RASPI_ATARIST)
-  return kHatari;
+  return kAtariSt;
 #elif defined(RASPI_AMIGA)
   return kAmiga;
+#elif defined(RASPI_ZXSPECTRUM)
+  return kZxSpectrum;
+#elif defined(RASPI_CPC)
+  return kCpc;
+#elif defined(RASPI_MSX)
+  return kMsx;
+#elif defined(RASPI_A2600)
+  return kA2600;
 #else
 #error Unknown RASPI_ variant
 #endif

@@ -1,0 +1,86 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#ifndef SMARTMOD_HXX
+#define SMARTMOD_HXX
+
+#include "bspf.hxx"
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<unsigned base>
+constexpr uInt8 smartmod(uInt8 x)
+{
+  return x % base;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<>
+constexpr uInt8 smartmod<2>(uInt8 x)
+{
+  return x & 0x01U;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<>
+constexpr uInt8 smartmod<4>(uInt8 x)
+{
+  return x & 0x03U;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<>
+constexpr uInt8 smartmod<8>(uInt8 x)
+{
+  return x & 0x07U;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<>
+constexpr uInt8 smartmod<16>(uInt8 x)
+{
+  return x & 0x0FU;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<>
+constexpr uInt8 smartmod<32>(uInt8 x)
+{
+  return x & 0x1FU;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<>
+constexpr uInt8 smartmod<64>(uInt8 x)
+{
+  return x & 0x3FU;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<>
+constexpr uInt8 smartmod<128>(uInt8 x)
+{
+  return x & 0x7FU;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<>
+constexpr uInt8 smartmod<256>(uInt8 x)
+{
+  return x & 0xFFU;
+}
+
+#endif  // SMARTMOD_HXX

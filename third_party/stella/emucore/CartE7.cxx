@@ -1,0 +1,401 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#include "System.hxx"
+#include "CartE7.hxx"
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+CartridgeE7::CartridgeE7(ByteSpan image, string_view md5,
+                         const Settings& settings)
+  : Cartridge(settings, md5)
+{
+  initialize(image);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeE7::initialize(ByteSpan image)
+{
+  // Allocate array for the ROM image and copy it in
+  myImage.assign(image.size(), 0);
+
+  // E7 assumes the 8K/12K/16K layouts (4/6/8 2K banks) it was designed for;
+  // below 3 banks the hardcoded hotspot-page offset in install() lands past
+  // the end of myRomAccessBase/myRomAccessCounter, and romBankCount() == 0
+  // divides by zero in bank(). A forced E7 type (extension/properties/-bs)
+  // bypasses CartDetector's size gate, so this must be checked here.
+  if(romBankCount() < 3)  // NOLINT(clang-analyzer-optin.cplusplus.VirtualCall)
+    throw std::runtime_error("CartridgeE7: invalid image size");
+
+  std::copy_n(image.data(), std::min<size_t>(romSize(), image.size()), myImage.data());
+  createRomAccessArrays(romSize() + myRAM.size());
+
+  myRAM.fill(0xFF);
+  myCurrentBank.fill(0);
+
+  myRAMBank = romBankCount() - 1;  // NOLINT(clang-analyzer-optin.cplusplus.VirtualCall)
+
+  myPlusROM = std::make_unique<PlusROM>(mySettings, *this);
+
+  // Determine whether we have a PlusROM cart
+  myPlusROM->initialize(myImage);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeE7::reset()
+{
+  Cartridge::reset();
+
+  initializeRAM(myRAM);
+
+  initializeStartBank(0);
+  const uInt32 ramBank = randomStartBank() ?
+    mySystem->randGenerator().next() % 4 : 0;
+
+  // Install some default banks for the RAM and first segment
+  bankRAM(ramBank);
+  bank(startBank());
+
+  myBankChanged = true;
+
+  if(myPlusROM->isValid())
+    (*myPlusROM).reset();  // Make sure to call ::reset, not smartptr reset
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeE7::setAccess(uInt16 addrFrom, uInt16 size,
+    uInt16 directOffset, uInt8* directData, uInt16 codeOffset,
+    System::PageAccessType type, uInt16 addrMask)
+{
+  if(addrMask == 0)
+    addrMask = size - 1;
+  System::PageAccess access(this, type);
+
+  for(uInt16 addr = addrFrom; addr < addrFrom + size; addr += System::PAGE_SIZE)
+  {
+    if(type == System::PageAccessType::READ)
+      access.directPeekBase = &directData[directOffset + (addr & addrMask)];
+    else if(type == System::PageAccessType::WRITE)  // all RAM writes mapped to ::poke()
+      access.directPokeBase = nullptr;
+    access.romAccessBase = &myRomAccessBase[codeOffset + (addr & addrMask)];
+    access.romPeekCounter = &myRomAccessCounter[codeOffset + (addr & addrMask)];
+    access.romPokeCounter = &myRomAccessCounter[codeOffset + (addr & addrMask) + myAccessSize];
+    mySystem->setPageAccess(addr, access);
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeE7::install(System& system)
+{
+  mySystem = &system;
+
+  System::PageAccess access(this, System::PageAccessType::READ);
+
+  // The hotspots at $1FE0-$1FE7 live in the page starting here; that page is
+  // handled separately below since it must dispatch through peek()/poke()
+  constexpr uInt16 HOTSPOT_PAGE = 0x1FE0U & ~U32(System::PAGE_MASK);
+
+  // Set the page accessing methods for the hot spots
+  for(uInt16 addr = HOTSPOT_PAGE; addr < 0x2000; addr += System::PAGE_SIZE)
+  {
+    access.romAccessBase = &myRomAccessBase[0x1fc0];
+    access.romPeekCounter = &myRomAccessCounter[0x1fc0];
+    access.romPokeCounter = &myRomAccessCounter[0x1fc0 + myAccessSize];
+    mySystem->setPageAccess(addr, access);
+  }
+
+  // Setup the second segment to always point to the last ROM bank
+  const auto offset = U16(myRAMBank * BANK_SIZE);
+  setAccess(0x1A00, HOTSPOT_PAGE - 0x1A00,
+            offset, myImage.data(), offset,
+            System::PageAccessType::READ, U16(BANK_SIZE - 1));
+  myCurrentBank[1] = myRAMBank;
+
+  // Install some default banks for the RAM and first segment
+  bankRAM(0);
+  bank(startBank());
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeE7::checkSwitchBank(uInt16 address)
+{
+  // Switch banks if necessary
+  if(romBankCount() == 4 && (address >= 0x0FE4) && (address <= 0x0FE7))
+  {
+    bank(address & 0x0003U);
+  }
+  else if(romBankCount() == 6 && (address >= 0x0FE0) && (address <= 0x0FE7))
+  {
+    static constexpr std::array<int, 8> banks = {
+      0, 1, 0, 1, 2, 3, 4 ,5
+    };
+
+    bank(banks[address & 0x0007U]);
+  }
+  else if(romBankCount() == 8 && (address >= 0x0FE0) && (address <= 0x0FE7))
+  {
+    bank(address & 0x0007U);
+  }
+  else if((address >= 0x0FE8) && (address <= 0x0FEB))
+  {
+    bankRAM(address & 0x0003U);
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 CartridgeE7::peek(uInt16 address)
+{
+  const uInt16 peekAddress = address;
+
+  // Is this a PlusROM?
+  if (myPlusROM->isValid())
+  {
+      uInt8 value = 0;
+      if (myPlusROM->peekHotspot(address, value))
+          return value;
+  }
+
+  address &= 0x0FFFU;
+
+  // Switch banks if necessary
+  checkSwitchBank(address);
+
+  if((myCurrentBank[0] == myRAMBank) && (address < BANK_SIZE / 2))
+  {
+    // Reading from the 1K write port @ $1000 triggers an unwanted write
+    return peekRAM(myRAM[address & (BANK_SIZE / 2 - 1)], peekAddress);
+  }
+  else if((address >= 0x0800) && (address <= 0x08FF))
+  {
+    // Reading from the 256B write port @ $1800 triggers an unwanted write
+    return peekRAM(myRAM[0x0400 + (myCurrentRAM << 8U) + (address & 0x00FFU)], peekAddress);
+  }
+  else
+    return myImage[(myCurrentBank[address >> 11U] << 11U) + (address & (BANK_SIZE - 1))];
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeE7::poke(uInt16 address, uInt8 value)
+{
+  // Is this a PlusROM?
+  if (myPlusROM->isValid() && myPlusROM->pokeHotspot(address, value))
+    return true;
+
+  const uInt16 pokeAddress = address;
+  address &= 0x0FFFU;
+
+  // Switch banks if necessary
+  checkSwitchBank(address);
+
+  // All RAM writes are mapped here
+  if((myCurrentBank[0] == myRAMBank) && (address < BANK_SIZE / 2))
+  {
+    // RAM banks
+    if(!(address & 0x0400U))
+    {
+      pokeRAM(myRAM[address & (BANK_SIZE / 2 - 1)], pokeAddress, value);
+      return true;
+    }
+    else
+    {
+      // Writing to the read port should be ignored, but trigger a break if option enabled
+      uInt8 dummy{0};
+
+      pokeRAM(dummy, pokeAddress, value);
+      myRamWriteAccess = pokeAddress;
+      return false;
+    }
+  }
+  else
+  {
+    // fixed 256 bytes of RAM
+    if((address >= 0x0800) && (address <= 0x09FF))
+    {
+      if(!(address & 0x100U))
+      {
+        pokeRAM(myRAM[0x0400 + (myCurrentRAM << 8U) + (address & 0x00FFU)], pokeAddress, value);
+        return true;
+      }
+      else
+      {
+        // Writing to the read port should be ignored, but trigger a break if option enabled
+        uInt8 dummy{0};
+
+        pokeRAM(dummy, pokeAddress, value);
+        myRamWriteAccess = pokeAddress;
+        return false;
+      }
+    }
+  }
+
+  return false;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeE7::bankRAM(uInt16 bank)
+{
+  if(hotspotsLocked()) return;
+
+  // Constrain to a valid RAM bank (there are 4, as in the 0x1800 hotspots)
+  // so a corrupt value can't map page access outside myRAM
+  bank &= 0x03U;
+
+  // Remember what bank we're in
+  myCurrentRAM = bank;
+  const uInt16 offset = bank << 8U; // * RAM_BANK_SIZE (256)
+
+  // Setup the page access methods for the current bank
+  // Set the page accessing method for the 256 bytes of RAM reading pages
+  setAccess(0x1800, 0x100, 0x0400 + offset, myRAM.data(), romSize() + BANK_SIZE / 2, System::PageAccessType::WRITE);
+  // Set the page accessing method for the 256 bytes of RAM reading pages
+  setAccess(0x1900, 0x100, 0x0400 + offset, myRAM.data(), romSize() + BANK_SIZE / 2, System::PageAccessType::READ);
+
+  myBankChanged = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeE7::bank(uInt16 bank, uInt16)
+{
+  if(hotspotsLocked()) return false;
+
+  // Constrain to a valid bank so a corrupt value (e.g. from a tampered save
+  // state) can't map page access outside the ROM image
+  bank %= romBankCount();
+
+  // Remember what bank we're in
+  myCurrentBank[0] = bank;
+
+  // Setup the page access methods for the current bank
+  if(bank != myRAMBank)
+  {
+    const uInt16 offset = bank << 11U; // * BANK_SIZE (2048)
+
+    // Map ROM image into first segment
+    setAccess(0x1000, BANK_SIZE, offset, myImage.data(), offset, System::PageAccessType::READ);
+  }
+  else
+  {
+    // Set the page accessing method for the 1K bank of RAM writing pages
+    setAccess(0x1000,                 BANK_SIZE / 2, 0, myRAM.data(), romSize(), System::PageAccessType::WRITE);
+    // Set the page accessing method for the 1K bank of RAM reading pages
+    setAccess(0x1000 + BANK_SIZE / 2, BANK_SIZE / 2, 0, myRAM.data(), romSize(), System::PageAccessType::READ);
+  }
+  return myBankChanged = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt16 CartridgeE7::getBank(uInt16 address) const
+{
+  return myCurrentBank[(address & 0xFFFU) >> 11U]; // 2K segments
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt16 CartridgeE7::getSegmentBank(uInt16 segment) const
+{
+  return getBank(0x800 * segment);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeE7::patch(uInt16 address, uInt8 value)
+{
+  address = address & 0x0FFFU;
+
+  if(address < 0x0800)
+  {
+    if(myCurrentBank[0] == myRAMBank)
+    {
+      // Normally, a write to the read port won't do anything
+      // However, the patch command is special in that ignores such
+      // cart restrictions
+      myRAM[address & 0x03FFU] = value;
+    }
+    else
+      myImage[(myCurrentBank[0] << 11U) + (address & (BANK_SIZE-1))] = value;
+  }
+  else if(address < 0x0900)
+  {
+    // Normally, a write to the read port won't do anything
+    // However, the patch command is special in that ignores such
+    // cart restrictions
+    myRAM[0x0400 + (myCurrentRAM << 8U) + (address & 0x00FFU)] = value;
+  }
+  else
+    myImage[(myCurrentBank[address >> 11U] << 11U) + (address & (BANK_SIZE-1))] = value;
+
+  return myBankChanged = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ByteSpan CartridgeE7::getImage() const
+{
+  return myImage;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeE7::save(Serializer& out) const
+{
+  try
+  {
+    out.putShortArray(myCurrentBank);
+    out.putShort(myCurrentRAM);
+    out.putByteArray(myRAM);
+    if (myPlusROM->isValid() && !myPlusROM->save(out))
+        return false;
+  }
+  catch(...)
+  {
+    cerr << "ERROR: " << name() << "::save\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeE7::load(Serializer& in)
+{
+  try
+  {
+    in.getShortArray(myCurrentBank);
+    myCurrentRAM = in.getShort();
+    in.getByteArray(myRAM);
+    if (myPlusROM->isValid() && !myPlusROM->load(in))
+        return false;
+  }
+  catch(...)
+  {
+    cerr << "ERROR: " << name() << "::load\n";
+    return false;
+  }
+
+  // Set up the previously used banks for the RAM and segment
+  bankRAM(myCurrentRAM);
+  bank(myCurrentBank[0]);
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt16 CartridgeE7::romBankCount() const
+{
+  return U16(myImage.size() >> 11U);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt16 CartridgeE7::romSize() const
+{
+  return romBankCount() * BANK_SIZE;  // NOLINT(clang-analyzer-optin.cplusplus.VirtualCall)
+}

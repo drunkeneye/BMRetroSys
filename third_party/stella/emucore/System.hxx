@@ -1,0 +1,631 @@
+//============================================================================
+//
+// MM     MM  6666  555555  0000   2222
+// MMMM MMMM 66  66 55     00  00 22  22
+// MM MMM MM 66     55     00  00     22
+// MM  M  MM 66666  55555  00  00  22222  --  "A 6502 Microprocessor Emulator"
+// MM     MM 66  66     55 00  00 22
+// MM     MM 66  66 55  55 00  00 22
+// MM     MM  6666   5555   0000  222222
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#ifndef SYSTEM_HXX
+#define SYSTEM_HXX
+
+class M6502;
+class M6532;
+class TIA;
+
+#include "bspf.hxx"
+#include "Cart.hxx"
+#include "Device.hxx"
+#include "NullDev.hxx"
+#include "Random.hxx"
+#include "Serializable.hxx"
+
+/**
+  This class represents a system consisting of a 6502 microprocessor
+  and a set of devices.  The devices are mapped into an addressing
+  space of 2^n bytes (1 <= n <= 16).  The addressing space is broken
+  into 2^m byte pages (1 <= m <= n), where a page is the smallest unit
+  a device can use when installing itself in the system.
+
+  In general the addressing space will be 8192 (2^13) bytes for a
+  6507 based system and 65536 (2^16) bytes for a 6502 based system.
+
+  @author  Bradford W. Mott
+*/
+class System : public Serializable
+{
+  public:
+    /**
+      Create a new system with an addressing space of 2^13 bytes and
+      pages of 2^6 bytes.  The address width can be widened to 16 bits
+      by calling setAddressBits(16) from a cartridge's install() method.
+    */
+    System(Random& random, M6502& m6502, M6532& m6532,
+           TIA& mTIA, Cartridge& mCart);
+    ~System() override = default;
+
+    // Amount to shift an address by to determine what page it's on
+    static constexpr uInt16 PAGE_SHIFT = 6;
+
+    // Size of a page
+    static constexpr uInt16 PAGE_SIZE = (1U << PAGE_SHIFT);
+
+    // Mask to apply to an address to obtain its page offset
+    static constexpr uInt16 PAGE_MASK = PAGE_SIZE - 1;
+
+    // Maximum number of pages (sized for full 16-bit address space)
+    static constexpr uInt16 MAX_NUM_PAGES = 1U << (16U - PAGE_SHIFT);
+
+  public:
+    // Determines the number of address lines to use for this System
+    enum class AddressSpace: uInt8 { M6507 = 13, M6502 = 16 };
+
+    /**
+      Set the number of address bits used by this system.  Must be called
+      from a cartridge's install() method before any pages are installed.
+    */
+    void setAddressBits(AddressSpace space) {
+      const auto bits = U16(space);
+      myAddressMask   = U16((1U << bits) - 1);
+      myNumPages      = U16(1U << U32(bits - PAGE_SHIFT));
+    }
+
+    // The current address mask (0x1FFF for 13-bit, 0xFFFF for 16-bit)
+    uInt16 addressMask() const { return myAddressMask; }
+
+    // The number of active pages under the current address mask
+    uInt16 numPages() const { return myNumPages; }
+
+    // The number of address bits in use (13 or 16)
+    uInt16 addressBits() const {
+      return (myAddressMask == 0xFFFF) ? 16 : 13;
+    }
+
+  public:
+    /**
+      Initialize system and all attached devices to known state.
+    */
+    void initialize();
+
+    /**
+      Reset the system cycle counter, the attached devices, and the
+      attached processor of the system.
+
+      @param autodetect  A hint to devices that the system is currently
+                         in autodetect mode.  That is, the system is being
+                         run to autodetect certain device settings before
+                         actual emulation will begin.  Certain devices may
+                         use this hint to act differently under those
+                         circumstances.
+    */
+    void reset(bool autodetect = false);
+
+  public:
+    /**
+      Answer the 6502 microprocessor attached to the system.  If a
+      processor has not been attached calling this function will fail.
+
+      @return The attached 6502 microprocessor
+    */
+    M6502& m6502() const { return myM6502; }
+
+    /**
+      Answer the 6532 processor attached to the system.  If a
+      processor has not been attached calling this function will fail.
+
+      @return The attached 6532 microprocessor
+    */
+    M6532& m6532() const { return myM6532; }
+
+    /**
+      Answer the TIA device attached to the system.
+
+      @return The attached TIA device
+    */
+    TIA& tia() const { return myTIA; }
+
+    /**
+      Answer the Cart attached to the system.
+
+      @return The attached cartridge
+    */
+    Cartridge& cart() const { return myCart; }
+
+    /**
+      Answer the random generator attached to the system.
+
+      @return The random generator
+    */
+    Random& randGenerator() const { return myRandom; }
+
+    /**
+      Get the null device associated with the system.  Every system
+      has a null device associated with it that's used by pages which
+      aren't mapped to "real" devices.
+
+      @return The null device associated with the system
+    */
+    const NullDevice& nullDevice() const { return myNullDevice; }
+
+  public:
+    /**
+      Get the number of system cycles which have passed since the
+      system was created.
+
+      @return The number of system cycles which have passed
+    */
+    uInt64 cycles() const { return myCycles; }
+
+    /**
+      Increment the system cycles by the specified number of cycles.
+
+      @param amount The amount to add to the system cycles counter
+    */
+    void incrementCycles(uInt32 amount) { myCycles += amount; }
+
+    /**
+      Informs all attached devices that the console type has changed.
+    */
+    void consoleChanged(ConsoleTiming timing);
+
+    /**
+      Answers whether the system is currently in device autodetect mode.
+    */
+    bool autodetectMode() const { return mySystemInAutodetect; }
+
+  public:
+    /**
+      Get the current state of the data bus in the system.  The current
+      state is the last data that was accessed by the system.
+
+      @return  The data bus state
+    */
+    uInt8 getDataBusState() const { return myDataBusState; }
+
+    /**
+      Read the byte at the specified address during normal (in-band) emulation.
+      Updates the data bus state; applies bus-stuffing overdrive if the cart
+      implements it.
+
+      @param address  The address to read
+      @param flags    Access type hint for the debugger (CODE, DATA, GFX, etc.)
+      @return The byte at the address
+    */
+    uInt8 peek(uInt16 address, Device::AccessType flags = Device::NONE)
+    {
+      return peekImpl<false>(address, flags);
+    }
+
+    /**
+      Read the byte at the specified address out-of-band (e.g. from the
+      debugger or high-score manager).  Skips bus-stuffing overdrive and
+      calls the device's peekOob() so it can suppress emulation side-effects.
+
+      @param address  The address to read
+      @param flags    Access type hint for the debugger (CODE, DATA, GFX, etc.)
+      @return The byte at the address
+    */
+    uInt8 peekOob(uInt16 address, Device::AccessType flags = Device::NONE)
+    {
+      return peekImpl<true>(address, flags);
+    }
+
+    /**
+      Write a byte to the specified address during normal (in-band) emulation.
+      Applies bus-stuffing overdrive if the cart implements it.  Marks the
+      destination page dirty on a successful write.
+
+      @param address  The address to write
+      @param value    The byte to write
+      @param flags    Access type hint for the debugger
+    */
+    void poke(uInt16 address, uInt8 value, Device::AccessType flags = Device::NONE)
+    {
+      pokeImpl<false>(address, value, flags);
+    }
+
+    /**
+      Write a byte to the specified address out-of-band (e.g. from the
+      debugger).  Skips bus-stuffing overdrive and calls the device's
+      pokeOob() so it can suppress emulation side-effects.
+
+      @param address  The address to write
+      @param value    The byte to write
+      @param flags    Access type hint for the debugger
+    */
+    void pokeOob(uInt16 address, uInt8 value, Device::AccessType flags = Device::NONE)
+    {
+      pokeImpl<true>(address, value, flags);
+    }
+
+    /**
+      Lock/unlock the data bus. When the bus is locked, peek() and
+      poke() don't update the bus state. The bus should be unlocked
+      while the CPU is running (normal emulation, or when the debugger
+      is stepping/advancing). It should be locked while the debugger
+      is active but not running the CPU. This is so the debugger can
+      use System.peek() to examine memory/registers without changing
+      the state of the system.
+    */
+    void lockDataBus()   { myDataBusLocked = true;  }
+    void unlockDataBus() { myDataBusLocked = false; }
+
+  #ifdef DEBUGGER_SUPPORT
+    /**
+      Access and modify the access type flags for the given
+      address.  Note that while any flag can be used, the disassembly
+      only really acts on CODE/GFX/PGFX/COL/PCOL/BCOL/AUD/DATA/ROW.
+    */
+    Device::AccessType getAccessFlags(uInt16 address) const;
+    void setAccessFlags(uInt16 address, Device::AccessType flags) const;
+
+    /**
+      Increase the given address's access counter
+
+      @param address The address to modify
+    */
+    void increaseAccessCounter(uInt16 address, bool isWrite) const;
+
+    /**
+      Get the read-access counter for the given address.
+
+      @param address The address to query
+      @return  Number of times the address has been read; 0 if not tracked
+    */
+    Device::AccessCounter getAccessCounter(uInt16 address) const;
+  #endif
+
+  public:
+    /**
+      Describes how a page can be accessed
+    */
+    enum class PageAccessType: uInt8 {
+      READ      = 1U,
+      WRITE     = 2U,
+      READWRITE = READ | WRITE
+    };
+
+    /**
+      Structure used to specify access methods for a page
+    */
+    struct PageAccess
+    {
+      /**
+        Pointer to a block of memory or the null pointer.  The null pointer
+        indicates that the device's peek method should be invoked for reads
+        to this page, while other values are the base address of an array
+        to directly access for reads to this page.
+      */
+      uInt8* directPeekBase{nullptr};
+
+      /**
+        Pointer to a block of memory or the null pointer.  The null pointer
+        indicates that the device's poke method should be invoked for writes
+        to this page, while other values are the base address of an array
+        to directly access for pokes to this page.
+      */
+      uInt8* directPokeBase{nullptr};
+
+      /**
+        Pointer to a lookup table for marking an address as CODE, DATA, GFX,
+        COL etc.
+        A CODE section is defined as any address that appears in the program
+        counter.  Currently, this is used by the debugger/disassembler to
+        conclusively determine if a section of address space is CODE, even
+        if the disassembler failed to mark it as such.
+        A DATA, GFX, COL etc. section is defined as any ROM address from which
+        data is read. This is used by the debugger/disassembler to format
+        address sections accordingly.
+      */
+      Device::AccessType* romAccessBase{nullptr};
+
+      /**
+        Per-address read-access counter indexed by page offset.  Tracks how
+        many times each address has been read; used by the debugger to show
+        access frequencies.  Null for device-mapped pages that manage their
+        own counters.
+      */
+      Device::AccessCounter* romPeekCounter{nullptr};
+
+      /**
+        Per-address write-access counter indexed by page offset.  Tracks how
+        many times each address has been written; used by the debugger to show
+        access frequencies.  Null for device-mapped pages that manage their
+        own counters.
+      */
+      Device::AccessCounter* romPokeCounter{nullptr};
+
+      /**
+        Pointer to the device associated with this page or to the system's
+        null device if the page hasn't been mapped to a device.
+      */
+      Device* device{nullptr};
+
+      /**
+        The manner in which the pages are accessed by the system
+        (READ, WRITE, READWRITE)
+      */
+      PageAccessType type{PageAccessType::READ};
+
+      // Constructors
+      PageAccess() = default;
+      PageAccess(Device* dev, PageAccessType access) : device{dev}, type{access} { }
+    };
+
+    /**
+      Set the page accessing method for the specified address.
+
+      @param addr   The address/page accessing methods should be set for
+      @param access The accessing methods to be used by the page
+    */
+    void setPageAccess(uInt16 addr, const PageAccess& access) {
+      myPageAccessTable[pageIndex(addr)] = access;
+    }
+
+    /**
+      Get the page accessing method for the specified address.
+
+      @param addr  The address/page to get accessing methods for
+      @return The accessing methods used by the page
+    */
+    const PageAccess& getPageAccess(uInt16 addr) const {
+      return myPageAccessTable[pageIndex(addr)];
+    }
+
+    /**
+      Get the page type for the given address.
+
+      @param addr  The address contained in the page in questions
+      @return  The type of page that contains the given address
+    */
+    System::PageAccessType getPageAccessType(uInt16 addr) const {
+      return myPageAccessTable[pageIndex(addr)].type;
+    }
+
+    /**
+      Mark the page containing this address as being dirty.
+
+      @param addr  Determines the page that is dirty
+    */
+    void setDirtyPage(uInt16 addr) {
+      myPageIsDirtyTable[pageIndex(addr)] = true;
+    }
+
+    /**
+      Answer whether any pages in given range of addresses have been
+      marked as dirty.
+
+      @param start_addr The start address; determines the start page
+      @param end_addr   The end address; determines the end page
+    */
+    bool isPageDirty(uInt16 start_addr, uInt16 end_addr) const;
+
+    /**
+      Mark all pages as clean (ie, turn off the dirty flag).
+    */
+    void clearDirtyPages();
+
+    /**
+      Save the current state of this system to the given Serializer.
+
+      @param out  The Serializer object to use
+      @return  False on any errors, else true
+    */
+    bool save(Serializer& out) const override;
+
+    /**
+      Load the current state of this system from the given Serializer.
+
+      @param in  The Serializer object to use
+      @return  False on any errors, else true
+    */
+    bool load(Serializer& in) override;
+
+  private:
+    /**
+      Convert the given address to its index into myPageAccessTable and
+      myPageIsDirtyTable.
+
+      @param addr  The address to convert
+
+      @return  The page index
+    */
+    uInt16 pageIndex(uInt16 addr) const {
+      return U16(U32(addr & myAddressMask) >> PAGE_SHIFT);
+    }
+
+    /**
+      Get the byte at the specified address.  No masking of the
+      address occurs before it's sent to the device mapped at
+      the address.
+
+        oob      Out-of-band peeks are not part of the activity of the
+                 emulated system
+      @param address  The address from which the value should be loaded
+      @param flags    Indicates that this address has the given flags
+                      for type of access (CODE, DATA, GFX, etc)
+
+      @return The byte at the specified address
+    */
+    template<bool oob = false>
+    uInt8 peekImpl(uInt16 address, Device::AccessType flags);
+
+    /**
+      Change the byte at the specified address to the given value.
+      No masking of the address occurs before it's sent to the device
+      mapped at the address.
+
+      This method sets the 'page dirty' if the write succeeds.  In the
+      case of direct-access pokes, the write always succeeds.  Otherwise,
+      if the device is handling the poke, we depend on its return value
+      for this information.
+
+        oob      Out-of-band peeks are not part of the activity of the
+                 emulated system
+      @param address  The address where the value should be stored
+      @param value    The value to be stored at the address
+    */
+    template<bool oob = false>
+    void pokeImpl(uInt16 address, uInt8 value, Device::AccessType flags);
+
+  private:
+    // The system RNG
+    Random& myRandom;
+
+    // 6502 processor attached to the system
+    M6502& myM6502;
+
+    // 6532 processor attached to the system
+    M6532& myM6532;
+
+    // TIA device attached to the system
+    TIA& myTIA;
+
+    // Cartridge device attached to the system
+    Cartridge& myCart;
+
+    // Number of system cycles executed since last reset
+    uInt64 myCycles{0};
+
+    // Null device to use for page which are not installed
+    NullDevice myNullDevice;
+
+    // Runtime address mask and page count; set via setAddressBits()
+    uInt16 myAddressMask{0};
+    uInt16 myNumPages{0};
+
+    // The list of PageAccess structures (sized for full 16-bit space)
+    std::array<PageAccess, MAX_NUM_PAGES> myPageAccessTable;
+
+    // The list of dirty pages (sized for full 16-bit space)
+    std::array<bool, MAX_NUM_PAGES> myPageIsDirtyTable{};
+
+    // The current state of the Data Bus
+    uInt8 myDataBusState{0};
+
+    // Whether or not peek() updates the data bus state. This
+    // is true during normal emulation, and false when the
+    // debugger is active.
+    bool myDataBusLocked{false};
+
+    // Whether autodetection is currently running (ie, the emulation
+    // core is attempting to autodetect display settings, cart modes, etc)
+    // Some parts of the codebase need to act differently in such a case
+    bool mySystemInAutodetect{false};
+
+    // Cached from the cart
+    // True when it overrides bus values via overdrivePeek/overdrivePoke
+    bool myCartridgeDoesBusStuffing{false};
+
+  private:
+    // Following constructors and assignment operators not supported
+    System() = delete;
+    System(const System&) = delete;
+    System(System&&) = delete;
+    System& operator=(const System&) = delete;
+    System& operator=(System&&) = delete;
+};
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<bool oob>
+inline uInt8 System::peekImpl(uInt16 addr, Device::AccessType flags)
+{
+  const uInt16 pageOffset  = addr & PAGE_MASK;
+  const uInt16 page        = pageIndex(addr);
+  const PageAccess& access = myPageAccessTable[page];
+
+#ifdef DEBUGGER_SUPPORT
+  // Set access type
+  if(access.romAccessBase)
+    *(access.romAccessBase + pageOffset) |= (flags | Device::addrBits(addr));
+  else
+    access.device->setAccessFlags(addr, flags);
+  // Increase access counter
+  if(flags != Device::NONE)
+  {
+    if(access.romPeekCounter)
+      *(access.romPeekCounter + pageOffset) += 1;
+    else
+      access.device->increaseAccessCounter(addr);
+  }
+#endif
+
+  const uInt8 result = [&] -> uInt8 {
+    uInt8 val;  // NOLINT(cppcoreguidelines-init-variables)
+    if(access.directPeekBase) [[likely]]
+      val = *(access.directPeekBase + pageOffset);
+    else if constexpr(oob)
+      val = access.device->peekOob(addr);
+    else
+      val = access.device->peek(addr);
+    if constexpr(!oob)
+      if(myCartridgeDoesBusStuffing) [[unlikely]]
+        return myCart.overdrivePeek(addr, val);
+    return val;
+  }();
+
+#ifdef DEBUGGER_SUPPORT
+  if(!myDataBusLocked)
+#endif
+    myDataBusState = result;
+
+  return result;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+template<bool oob>
+inline void System::pokeImpl(uInt16 addr, uInt8 value, Device::AccessType flags)
+{
+  if constexpr(!oob)
+    if(myCartridgeDoesBusStuffing) [[unlikely]]
+      value = myCart.overdrivePoke(addr, value);
+
+  const uInt16 pageOffset  = addr & PAGE_MASK;
+  const uInt16 page        = pageIndex(addr);
+  const PageAccess& access = myPageAccessTable[page];
+
+#ifdef DEBUGGER_SUPPORT
+  // Set access type
+  if(access.romAccessBase)
+    *(access.romAccessBase + pageOffset) |= (flags | Device::addrBits(addr));
+  else
+    access.device->setAccessFlags(addr, flags);
+  // Increase access counter
+  if(flags != Device::NONE)
+  {
+    if(access.romPokeCounter)
+      *(access.romPokeCounter + pageOffset) += 1;
+    else
+      access.device->increaseAccessCounter(addr, true);
+  }
+#endif
+
+  if(access.directPokeBase) [[likely]]
+  {
+    *(access.directPokeBase + pageOffset) = value;
+    myPageIsDirtyTable[page] = true;
+  }
+  else
+  {
+    if constexpr(oob)
+      myPageIsDirtyTable[page] = access.device->pokeOob(addr, value);
+    else
+      myPageIsDirtyTable[page] = access.device->poke(addr, value);
+  }
+
+#ifdef DEBUGGER_SUPPORT
+  if(!myDataBusLocked)
+#endif
+    myDataBusState = value;
+}
+
+#endif  // SYSTEM_HXX

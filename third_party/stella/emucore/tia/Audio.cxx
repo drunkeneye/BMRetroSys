@@ -1,0 +1,222 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#include "Audio.hxx"
+#include "AudioQueue.hxx"
+
+#include <cmath>
+
+namespace {
+  constexpr double R_MAX = 30.;
+  constexpr double R = 1.;
+
+  Int16 mixingTableEntry(uInt8 v, uInt8 vMax)
+  {
+    return I16(
+      floor(0x7fff * DBL(v) / DBL(vMax) *
+            (R_MAX + R * DBL(vMax)) / (R_MAX + R * DBL(v)))
+    );
+  }
+} // namespace
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Audio::Audio()
+{
+  for (uInt8 i = 0; i <= 0x1e; ++i)
+    myMixingTableSum[i] = mixingTableEntry(i, 0x1e);
+  for (uInt8 i = 0; i <= 0x0f; ++i)
+    myMixingTableIndividual[i] = mixingTableEntry(i, 0x0f);
+
+  reset();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Audio::reset()
+{
+  mySumChannel0 = mySumChannel1 = mySumCt = 0;
+  myCounter = 0;
+  mySampleIndex = 0;
+
+  myChannel0.reset();
+  myChannel1.reset();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Audio::setAudioQueue(const shared_ptr<AudioQueue>& queue)
+{
+  myAudioQueue = queue;
+
+  myCurrentFragment = myAudioQueue->enqueue();
+  mySampleIndex = 0;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Audio::createSample()
+{
+  // Calculate average of all recent volume samples. the average for each
+  // channel is mixed to create a single audible value
+  const auto sample0 = U8(mySumChannel0 / mySumCt);
+  const auto sample1 = U8(mySumChannel1 / mySumCt);
+  mySumChannel0 = mySumChannel1 = mySumCt = 0;
+
+  addSample(sample0, sample1);
+  if(myRewindMode)
+    mySamples.push_back(U32(sample0) | (U32(sample1) << 4U));
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Audio::addSample(uInt8 sample0, uInt8 sample1)
+{
+  if(!myAudioQueue) return;
+
+  if(myAudioQueue->isStereo()) {
+    myCurrentFragment[SZT(2 * mySampleIndex)] =
+      myMixingTableIndividual[sample0];
+    myCurrentFragment[SZT(2 * mySampleIndex + 1)] =
+      myMixingTableIndividual[sample1];
+  }
+  else {
+    myCurrentFragment[mySampleIndex] = myMixingTableSum[sample0 + sample1];
+  }
+
+  if(++mySampleIndex == myAudioQueue->fragmentSize()) {
+    mySampleIndex = 0;
+    myCurrentFragment = myAudioQueue->enqueue(myCurrentFragment);
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Audio::save(Serializer& out) const
+{
+  try
+  {
+    out.putByte(myCounter);
+
+    // The queue starts out pristine after loading, so we don't need to save
+    // any other parts of our state
+
+    if (!myChannel0.save(out)) return false;
+    if (!myChannel1.save(out)) return false;
+
+    out.putInt(mySumChannel0);
+    out.putInt(mySumChannel1);
+    out.putInt(mySumCt);
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA_Audio::save\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Audio::load(Serializer& in)
+{
+  try
+  {
+    myCounter = in.getByte();
+
+    if (!myChannel0.load(in)) return false;
+    if (!myChannel1.load(in)) return false;
+
+    const uInt32 sumChannel0 = in.getInt();
+    const uInt32 sumChannel1 = in.getInt();
+    const uInt32 sumCt = in.getInt();
+
+    // createSample() divides mySumChannelN by mySumCt and uses the result to
+    // index the mixing tables (max legal value 15); this also rejects a
+    // value crafted to wrap to 0 on the very next tick's mySumCt += chunk
+    // and divide-by-zero there
+    //
+    // MAX_SUM_CT: createSample() resets mySumCt to 0 at every phase1 event
+    // (tick()'s counter == 38 or 150), twice per 228-clock scanline, so a
+    // legitimate mySumCt is never more than ~116 (the longer of the two
+    // reset intervals); 256 gives a clean rounding margin above that
+    static constexpr uInt32 MAX_SUM_CT = 256;
+    if (sumCt == 0 || sumCt > MAX_SUM_CT ||
+        sumChannel0 / sumCt > 15 || sumChannel1 / sumCt > 15)
+      return false;
+
+    mySumChannel0 = sumChannel0;
+    mySumChannel1 = sumChannel1;
+    mySumCt = sumCt;
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA_Audio::load\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Audio::saveSamples(Serializer& out) const
+{
+  try
+  {
+    out.putLong(U64(mySamples.size()));
+    out.putByteArray(mySamples);
+
+    // TODO: check if this improves sound of playback for larger state gaps
+    //out.putInt(mySampleIndex);
+    //out.putShortArray((uInt16*)myCurrentFragment, myAudioQueue->fragmentSize());
+
+    mySamples.clear();
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA_Audio::saveSamples\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Audio::loadSamples(Serializer& in)
+{
+  try
+  {
+    const uInt64 sampleSize = in.getLong();
+    // The raw sample bytes can't exceed the size of the stream they came from;
+    // reject a corrupt size before attempting the allocation
+    if(sampleSize > in.size())
+      return false;
+    ByteArray samples(sampleSize);
+    in.getByteArray(samples);
+
+    // Feed all loaded samples into the audio queue
+    for(auto i = 0UZ; i < sampleSize; ++i)
+    {
+      const uInt8 sample = samples[i];
+      const uInt8 sample0 = sample & 0x0fU;
+      const uInt8 sample1 = sample >> 4U;
+
+      addSample(sample0, sample1);
+    }
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA_Audio::loadSamples\n";
+    return false;
+  }
+
+  return true;
+}

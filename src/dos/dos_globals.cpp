@@ -73,8 +73,11 @@ unsigned int sendkeymap = 0;
 bool startup_state_numlock = false;
 bool startup_state_capslock = false;
 bool startup_state_scrlock = false;
-MOUSE_EMULATION user_cursor_emulation = MOUSE_EMULATION_NEVER;
-bool user_cursor_locked = false;
+MOUSE_EMULATION user_cursor_emulation = MOUSE_EMULATION_ALWAYS;
+bool user_cursor_locked = true;  // no window capture on bare metal: the USB
+                                 // mouse is always guest-owned (the BMX menu
+                                 // takes it over a separate kernel path while
+                                 // open, and the guest drain is UI-gated)
 int user_cursor_sw = 0;                // upstream: 640
 int user_cursor_sh = 0;                // upstream: 480
 int user_cursor_x = 0;

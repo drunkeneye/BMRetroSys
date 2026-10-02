@@ -31,6 +31,7 @@
 #include "OptionTypes.h"
 #include "CoreError.h"
 #include "ImageTypes.h"
+#include "Images/DMS/DMSFile.h"
 #include "DiagRom.h"
 #include "Snapshot.h"
 #include "HDFFile.h"
@@ -461,8 +462,24 @@ bool config_insert_adf(int drive, const unsigned char *data, long len,
   }
   bool ok = false;
   try {
-    // Direct FloppyDriveAPI::insert(span) -> FloppyDrive::swapDisk.
+    // DiskMasher archives unpack to plain ADF in memory first (xDMS
+    // extractDMS via rvlib DMSFile); insert() copies synchronously, so
+    // the view below never outlives this call.
+    std::unique_ptr<retro::vault::DMSFile> dms;
+    if (len >= 4 && memcmp(data, "DMS!", 4) == 0) {
+      dms = std::make_unique<retro::vault::DMSFile>((const vamiga::u8 *)data,
+                                                   (vamiga::isize)len);
+      debug_log("config: df%d unpacked DMS (%ld -> %lld bytes)", drive, len,
+                (long long)dms->getADF().getSize());
+    }
     std::span<const vamiga::u8> span((const vamiga::u8 *)data, (size_t)len);
+    if (dms) {
+      const retro::vault::ADFFile &adf = dms->getADF();
+      utl::ByteView view = adf.byteView(0, adf.getSize());
+      span = std::span<const vamiga::u8>((const vamiga::u8 *)view.data(),
+                                        (size_t)view.size());
+    }
+    // Direct FloppyDriveAPI::insert(span) -> FloppyDrive::swapDisk.
     if (drive == 0) {
       s_v->df0.insert(span, vamiga::ImageFormat::ADF, write_protect);
     } else if (drive == 1) {
@@ -898,15 +915,19 @@ bool config_init(const Config &config) {
 
   // Kickstart pool on SD (user-supplied, never in git). First hit wins.
   static const char *candidates[] = {
+      "/roms/AMIGA/kick34005.A500",
+      "/roms/AMIGA/kick37175.A500",
+      "/roms/AMIGA/kick40063.A600",
+      "/roms/AMIGA/kick40068.A1200",
+      "/roms/AMIGA/aros-amiga-m68k-rom.bin",
       "/roms/kick/kick34005.A500",
       "/roms/kick/kick37175.A500",
       "/roms/kick/kick40063.A600",
       "/roms/kick/kick40068.A1200",
-      "/roms/kick/aros-amiga-m68k-rom.bin",
-      "SD:/roms/kick/kick34005.A500",
-      "SD:/roms/kick/kick37175.A500",
-      "SD:/roms/kick/kick40063.A600",
-      "SD:/roms/kick/kick40068.A1200",
+      "SD:/roms/AMIGA/kick34005.A500",
+      "SD:/roms/AMIGA/kick37175.A500",
+      "SD:/roms/AMIGA/kick40063.A600",
+      "SD:/roms/AMIGA/kick40068.A1200",
   };
   bool have_rom = false;
   for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {

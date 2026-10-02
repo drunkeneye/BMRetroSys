@@ -125,7 +125,9 @@ uint64_t CurrentUniversalEpoch()
 
 BoardFamily RunningBoard()
 {
-#if RASPPI == 4
+#if RASPPI == 3
+    return BoardFamily::Pi3;
+#elif RASPPI == 4
     return BoardFamily::Pi4Pi400;
 #elif RASPPI == 5
     return BoardFamily::Pi5Pi500;

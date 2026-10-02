@@ -181,9 +181,11 @@ public:
     // other validations stay strict. Never enabled by the update flow.
     void SetLenientExtraFields(bool lenient);
 
-    // Opt-in path leniency for browsing: backslashes become separators and
-    // leading slashes are stripped (Windows-origin archives), then all
-    // normal validations apply. Never enabled by the update flow.
+    // Opt-in path leniency for browsing: backslashes become separators,
+    // leading slashes are stripped (Windows-origin archives), and legacy
+    // (CP850) or UTF-8 diacritics fold to ASCII letters (French/Portuguese
+    // ROM packs); then all normal validations apply. Never enabled by the
+    // update flow.
     void SetLenientPaths(bool lenient);
 
     // Opt-in archive leniency for browsing: ignore the trailing archive
@@ -200,6 +202,11 @@ public:
     // Raw offending name of the last validation failure (sanitized,
     // best effort; empty if none). Valid until the next Open call.
     const char *FirstFailurePath() const;
+
+    // General-purpose bit flags of the entry that failed with
+    // UnsupportedFlags (0 otherwise). Lets the menu report WHICH flag
+    // (e.g. bit 0 = encrypted) instead of a bare status string.
+    uint16_t FirstFailureFlags() const;
 
     // Open validates every EOCD, central, local, metadata, path, ordering, and
     // limit invariant, but does not yet inflate payloads. entries must remain
@@ -297,6 +304,7 @@ private:
     bool lenient_archive_;
     bool lenient_ratio_;
     char first_failure_path_[256];
+    uint16_t first_failure_flags_;
     uint8_t validated_inventory_binding_[kSha256DigestBytes];
     bool validated_contents_;
 };

@@ -35,6 +35,8 @@ int SdlAudioBufferSize = 0;
 int pulse_swallowing_count = 0;
 
 static bool s_playing = false;
+// Master volume percent (owned by atarist_sound.cpp, menu-driven 0..300).
+extern int atarist_volume_pct;
 // Loudest single Unlock batch since last heartbeat (mixer output level).
 // The drain zeroes nGeneratedSamples, so without this the heartbeat would
 // always read 0 and silence would be indistinguishable from a dead mixer.
@@ -56,11 +58,25 @@ static void drain_ring(void) {
   int pos = AudioMixBuffer_pos_read;
   while (available > 0) {
     int chunk = available > kDrainFrames ? kDrainFrames : available;
+    int vol = atarist_volume_pct;
+    if (vol < 0) {
+      vol = 0;
+    }
+    if (vol > 300) {
+      vol = 300;
+    }
     for (int i = 0; i < chunk; i++) {
       int idx = (pos + i) & AUDIOMIXBUFFER_SIZE_MASK;
       int32_t mixed = (int32_t)AudioMixBuffer[idx][0] +
                       (int32_t)AudioMixBuffer[idx][1];
-      s_mono[i] = (int16_t)(mixed / 2);
+      mixed = (mixed * vol) / 200;
+      if (mixed > 32767) {
+        mixed = 32767;
+      }
+      if (mixed < -32768) {
+        mixed = -32768;
+      }
+      s_mono[i] = (int16_t)mixed;
     }
     circle_sound_write(s_mono, (size_t)chunk);
     pos = (pos + chunk) & AUDIOMIXBUFFER_SIZE_MASK;

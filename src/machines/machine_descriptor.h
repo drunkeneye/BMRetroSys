@@ -14,6 +14,10 @@ enum class MachineId {
   DOS,
   ATARIST,
   AMIGA,
+  ZXSPECTRUM,
+  CPC,
+  MSX,
+  A2600,
 };
 
 struct MachineCycleProfile {

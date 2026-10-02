@@ -1,0 +1,21 @@
+Amstrad CPC system ROMs (/roms/CPC on the SD card).
+
+Two layouts are accepted (combined preferred, split fallback); the
+kernel tries combined first, then split parts:
+
+  combined (upstream ZEsarUX convention):
+    cpc464.rom      32768 bytes = OS 16K + BASIC 16K      (CPC 464)
+    cpc664.rom      49152 bytes = OS + BASIC + AMSDOS     (CPC 664)
+    cpc6128.rom     49152 bytes = OS + BASIC + AMSDOS     (CPC 6128)
+
+  split (TOSEC/CLK convention, 16K each):
+    os464.rom + basic464.rom
+    os664.rom + basic664.rom + amsdos.rom
+    os6128.rom + basic6128.rom + amsdos.rom
+
+Missing pieces: run tools/download_roms.py --only=cpc on the build
+host (fetches the split set from TomHarte/CLK; Amstrad permits free
+distribution of CPC ROMs for emulation) or copy genuine dumps with the
+exact names above into /roms/CPC/ by hand.
+
+Upper ROM slots: 0 = BASIC, 7 = AMSDOS; unpopulated slots read as RAM.

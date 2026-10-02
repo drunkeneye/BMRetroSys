@@ -104,6 +104,10 @@ static void format_binding(char *buffer, size_t size, unsigned binding) {
 
 static void menu_value_changed(struct menu_item *item) {
    int pin_index = item->id;
+   if (pin_index < 0 || pin_index >= NUM_GPIO_PINS || item->value < 0 ||
+       item->value >= item->num_choices) {
+      return;
+   }
    gpio_bindings[pin_index] = item->choice_ints[item->value];
 }
 
@@ -127,22 +131,27 @@ void build_gpio_menu(struct menu_item *root) {
        continue;
      }
 
-     item = ui_menu_add_multiple_choice(i, root, "");
-     item->num_choices = NUM_GPIO_BINDINGS;
-     sprintf (item->name, "GPIO%02d Binding", custom_gpio_pins[i]);
+      item = ui_menu_add_multiple_choice(i, root, "");
+      item->num_choices = NUM_GPIO_BINDINGS;
+      snprintf (item->name, sizeof item->name, "GPIO%02d Binding", custom_gpio_pins[i]);
 
-     for (int j = 0; j < NUM_GPIO_BINDINGS; j++) {
-        // Lower = func, Upper = bank arg
-        unsigned int func = menu_items_list[j][0];
-        unsigned int bank = menu_items_list[j][1];
-        unsigned int binding_value = func | (bank << 8);
-        strcpy(item->choices[j], function_to_string(func));
+      for (int j = 0; j < NUM_GPIO_BINDINGS; j++) {
+         // Lower = func, Upper = bank arg
+         unsigned int func = menu_items_list[j][0];
+         unsigned int bank = menu_items_list[j][1];
+         unsigned int binding_value = func | (bank << 8);
+         snprintf(item->choices[j], sizeof item->choices[j], "%s",
+                  function_to_string(func));
 
-        if (bank > 0) {
-           char tmp[16];
-           sprintf (tmp, " (Bank %d)", bank);
-           strcat (item->choices[j], tmp);
-        }
+         if (bank > 0) {
+            char tmp[16];
+            snprintf (tmp, sizeof tmp, " (Bank %d)", bank);
+            size_t used = strlen(item->choices[j]);
+            if (used + 1 < sizeof item->choices[j]) {
+               strncat (item->choices[j], tmp,
+                        sizeof item->choices[j] - used - 1);
+            }
+         }
 
         item->choice_ints[j] = binding_value;
 

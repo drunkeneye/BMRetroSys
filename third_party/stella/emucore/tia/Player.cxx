@@ -1,0 +1,558 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#include "Player.hxx"
+#include "DrawCounterDecodes.hxx"
+#include "TIA.hxx"
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Player::Player(CollisionMask collisionMask)
+  : myCollisionMaskDisabled{collisionMask}
+{
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::reset()
+{
+  myDecodes = DrawCounterDecodes::get().playerDecodes()[myDecodesOffset];
+  myHmmClocks = 0;
+  myCounter = 0;
+  isMoving = false;
+  myIsRendering = false;
+  myRenderCounter = 0;
+  myCopy = 1;
+  myPatternOld = 0;
+  myPatternNew = 0;
+  myIsReflected = false;
+  myIsDelaying = false;
+  myColor = myObjectColor = myDebugColor = 0;
+  myDebugEnabled = false;
+  collision = myCollisionMaskDisabled;
+  mySampleCounter = 0;
+  myDividerPending = 0;
+  myDividerChangeCounter = -1;
+  myInvertedPhaseClock = false;
+  myUseInvertedPhaseClock = false;
+  myUseShortLateHMove = false;
+  myUseLateRespx = false;
+  myPattern = 0;
+
+  setDivider(1);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::grp(uInt8 pattern)
+{
+  const uInt8 oldPatternNew = myPatternNew;
+
+  myPatternNew = pattern;
+
+  // Without VDEL the new pattern is what's actually rendered — flush when
+  // it really differs. (With VDEL, the live pattern is myPatternOld until
+  // shufflePatterns latches the new one, so no flush is needed here.)
+  // The guards on this branch are optimizations; see TIA::flushLineCache.
+  if (!myIsDelaying && myPatternNew != oldPatternNew) {
+    myTIA->flushLineCache();
+    updatePattern();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::hmp(uInt8 value)
+{
+  myHmmClocks = (U32(value) >> 4U) ^ 0x08U;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::nusiz(uInt8 value, bool hblank)
+{
+  myDecodesOffset = value & 0x07U;
+
+  switch (myDecodesOffset) {
+    case 5:
+      myDividerPending = 2;
+      break;
+
+    case 7:
+      myDividerPending = 4;
+      break;
+
+    default:
+      myDividerPending = 1;
+      break;
+  }
+
+  const uInt8* oldDecodes = myDecodes;
+
+  myDecodes = DrawCounterDecodes::get().playerDecodes()[myDecodesOffset];
+
+  // Changing NUSIZ can trigger a decode in the same cycle
+  // (https://github.com/stella-emu/stella/issues/1012)
+  const uInt8 prevCounter =
+    (myCounter + TIAConstants::H_PIXEL - 1) % TIAConstants::H_PIXEL;
+  if (!myIsRendering && myDecodes[prevCounter]) {
+    myIsRendering = true;
+    mySampleCounter = 0;
+    myRenderCounter = renderCounterOffset;
+    myCopy = myDecodes[prevCounter];
+  }
+
+  if (
+    myDecodes != oldDecodes &&
+    myIsRendering &&
+    (myRenderCounter - Count::renderCounterOffset) < 2 &&
+    !myDecodes[(myCounter - myRenderCounter + Count::renderCounterOffset + TIAConstants::H_PIXEL - 1) % TIAConstants::H_PIXEL]
+  ) {
+    myIsRendering = false;
+  }
+
+  if (myDividerPending == myDivider) return;
+
+  // The following is an effective description of the effects of NUSIZ during
+  // decode and rendering.
+
+  if (myIsRendering) {
+    const Int8 delta = myRenderCounter - Count::renderCounterOffset;
+
+    switch ((U32(myDivider) << 4U) | myDividerPending) {
+      case 0x12:
+      case 0x14:
+        if (hblank) {
+          if (delta < 4)
+            setDivider(myDividerPending);
+          else
+            myDividerChangeCounter = (delta < 5 ? 1 : 0);
+        } else {
+          if (delta < 3)
+            setDivider(myDividerPending);
+          else
+            myDividerChangeCounter = 1;
+        }
+
+        break;
+
+      case 0x21:
+      case 0x41:
+        if (delta < (hblank ? 4 : 3)) {
+          setDivider(myDividerPending);
+        } else if (delta < (hblank ? 6 : 5)) {
+          setDivider(myDividerPending);
+          --myRenderCounter;
+        } else {
+          myDividerChangeCounter = (hblank ? 0 : 1);
+        }
+
+        break;
+
+      case 0x42:
+      case 0x24:
+        if (myRenderCounter < 1 || (hblank && (myRenderCounter % myDivider == 1)))
+          setDivider(myDividerPending);
+        else
+          myDividerChangeCounter = (myDivider - (myRenderCounter - 1) % myDivider);
+        break;
+
+      default:
+        // should never happen
+        setDivider(myDividerPending);
+        break;
+    }
+
+  } else {
+    setDivider(myDividerPending);
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::resp(uInt8 counter, bool lateRespxCondition)
+{
+  if (myUseLateRespx && lateRespxCondition)
+    counter = (counter + TIAConstants::H_PIXEL - 1) % TIAConstants::H_PIXEL;
+
+  myCounter = counter;
+
+  // This tries to account for the effects of RESP during draw counter decode as
+  // described in Andrew Towers' notes. Still room for tuning.'
+  if (myIsRendering && (myRenderCounter - Count::renderCounterOffset) < 4)
+    myRenderCounter = Count::renderCounterOffset + (counter - 157);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::refp(uInt8 value)
+{
+  const bool oldIsReflected = myIsReflected;
+
+  myIsReflected = (value & 0x08U) > 0;
+
+  if (oldIsReflected != myIsReflected) {
+    // REFP changed: updatePattern() will re-bit-reverse myPattern, so
+    // anything already drawn this line was rendered with the wrong bit
+    // order. The "if changed" guard is just an optimization.
+    myTIA->flushLineCache();
+    updatePattern();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::vdelp(uInt8 value)
+{
+  const bool oldIsDelaying = myIsDelaying;
+
+  myIsDelaying = (value & 0x01U) > 0;
+
+  if (oldIsDelaying != myIsDelaying) {
+    // VDEL flip switches which of myPatternOld/New is rendered — the live
+    // pattern source changes mid-line. Guarded optimization.
+    myTIA->flushLineCache();
+    updatePattern();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::toggleEnabled(bool enabled)
+{
+  const bool oldIsSuppressed = myIsSuppressed;
+
+  myIsSuppressed = !enabled;
+
+  if (oldIsSuppressed != myIsSuppressed) updatePattern();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::toggleCollisions(bool enabled)
+{
+  myCollisionMaskEnabled = enabled ? CollisionMask::ALL : (CollisionMask::VISIBLE | myCollisionMaskDisabled);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::setColor(uInt8 color)
+{
+  // Color may have changed mid-line — cached pixels used the old value.
+  // The extra "&& myPattern" guard is an optimization: when the pattern is
+  // empty the player isn't emitting, so the color isn't on screen anyway.
+  // Flushing unconditionally would also be correct (see TIA::flushLineCache).
+  if (color != myObjectColor && myPattern) myTIA->flushLineCache();
+
+  myObjectColor = color;
+  applyColors();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::setDebugColor(uInt8 color)
+{
+  // Debug palette override changed — any pixels drawn this line used the
+  // previous override.
+  myTIA->flushLineCache();
+  myDebugColor = color;
+  applyColors();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::enableDebugColors(bool enabled)
+{
+  // Toggling debug colors switches the rendered color source.
+  myTIA->flushLineCache();
+  myDebugEnabled = enabled;
+  applyColors();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::applyColorLoss()
+{
+  // PAL color-loss flips the LSB of the rendered color.
+  myTIA->flushLineCache();
+  applyColors();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::setInvertedPhaseClock(bool enable)
+{
+  myUseInvertedPhaseClock = enable;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::setShortLateHMove(bool enable)
+{
+  myUseShortLateHMove = enable;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::setLateRespx(bool enable)
+{
+  myUseLateRespx = enable;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::startMovement()
+{
+  isMoving = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::nextLine()
+{
+  if (!myIsRendering || myRenderCounter < myRenderCounterTripPoint)
+    collision = myCollisionMaskDisabled;
+  else
+    collision = (myPattern & (1U << mySampleCounter)) ? myCollisionMaskEnabled : myCollisionMaskDisabled;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::shufflePatterns()
+{
+  const uInt8 oldPatternOld = myPatternOld;
+
+  myPatternOld = myPatternNew;
+
+  // With VDEL active myPatternOld is the live pattern — latching a
+  // different value mid-line changes what gets drawn from here on.
+  if (myIsDelaying && myPatternOld != oldPatternOld) {
+    myTIA->flushLineCache();
+    updatePattern();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 Player::getRespClock() const
+{
+  switch (myDivider)
+  {
+    case 1:
+      return (myCounter + TIAConstants::H_PIXEL - 5) % TIAConstants::H_PIXEL;
+
+    case 2:
+      return (myCounter + TIAConstants::H_PIXEL - 8) % TIAConstants::H_PIXEL;
+
+    case 4:
+      return (myCounter + TIAConstants::H_PIXEL - 12) % TIAConstants::H_PIXEL;
+
+    default:
+      throw std::runtime_error("invalid width");
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::setGRPOld(uInt8 pattern)
+{
+  // Debugger-only direct write into the VDEL-old pattern slot.
+  myTIA->flushLineCache();
+
+  myPatternOld = pattern;
+  updatePattern();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::updatePattern()
+{
+  if (myIsSuppressed) {
+    myPattern = 0;
+    return;
+  }
+
+  myPattern = myIsDelaying ? myPatternOld : myPatternNew;
+
+  if (!myIsReflected) {
+    myPattern = (
+      ((myPattern & 0x01U) << 7U) |
+      ((myPattern & 0x02U) << 5U) |
+      ((myPattern & 0x04U) << 3U) |
+      ((myPattern & 0x08U) << 1U) |
+      ((myPattern & 0x10U) >> 1U) |
+      ((myPattern & 0x20U) >> 3U) |
+      ((myPattern & 0x40U) >> 5U) |
+      ((myPattern & 0x80U) >> 7U)
+    );
+  }
+
+  if (myIsRendering && myRenderCounter >= myRenderCounterTripPoint) {
+    collision = (myPattern & (1U << mySampleCounter)) ? myCollisionMaskEnabled : myCollisionMaskDisabled;
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::setDivider(uInt8 divider)
+{
+  myDivider = divider;
+  myRenderCounterTripPoint = divider == 1 ? 0 : 1;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::applyColors()
+{
+  if (!myDebugEnabled)
+  {
+    if (myTIA->colorLossActive()) myObjectColor |= 0x01U;
+    else                          myObjectColor &= 0xfeU;
+    myColor = myObjectColor;
+  }
+  else
+    myColor = myDebugColor;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 Player::getColor() const
+{
+  if(!myDebugEnabled)
+    return myColor;
+  else
+    switch(myCopy)
+    {
+      case 2:
+        return myColor - 2;
+      case 3:
+        return myColor + 2;
+      default:
+        return myColor;
+    }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 Player::getPosition() const
+{
+  // Wide players are shifted by one pixel to the right
+  const uInt8 shift = myDivider == 1 ? 0 : 1;
+
+  // position =
+  //    current playfield x +
+  //    (current counter - 156 (the decode clock of copy 0)) +
+  //    clock count after decode until first pixel +
+  //    shift (accounts for wide player shift) +
+  //    1 (it'll take another cycle after the decode for the render counter to start ticking)
+  //
+  // The result may be negative, so we add TIA::H_PIXEL and do the modulus -> 317 = 156 + TIA::H_PIXEL + 1
+  //
+  // Mind the sign of renderCounterOffset: it's defined negative above
+  return (317 - myCounter - Count::renderCounterOffset + shift + myTIA->getPosition()) % TIAConstants::H_PIXEL;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Player::setPosition(uInt8 newPosition)
+{
+  // Debugger-only direct move — the position counter is the live source
+  // for the next decode, so any cached line for the current scanline is
+  // about to disagree with reality.
+  myTIA->flushLineCache();
+
+  const uInt8 shift = myDivider == 1 ? 0 : 1;
+
+  // See getPosition for an explanation
+  myCounter = (317 - newPosition - Count::renderCounterOffset + shift + myTIA->getPosition()) % TIAConstants::H_PIXEL;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Player::save(Serializer& out) const
+{
+  try
+  {
+    out.putShort(Bitmask::to_underlying(collision));
+    out.putShort(Bitmask::to_underlying(myCollisionMaskDisabled));
+    out.putShort(Bitmask::to_underlying(myCollisionMaskEnabled));
+
+    out.putByte(myColor);
+    out.putByte(myObjectColor);  out.putByte(myDebugColor);
+    out.putBool(myDebugEnabled);
+
+    out.putBool(myIsSuppressed);
+
+    out.putByte(myHmmClocks);
+    out.putByte(myCounter);
+    out.putBool(isMoving);
+
+    out.putBool(myIsRendering);
+    out.putByte(myRenderCounter);
+    out.putByte(myRenderCounterTripPoint);
+    out.putByte(myCopy);
+    out.putByte(myDivider);
+    out.putByte(myDividerPending);
+    out.putByte(mySampleCounter);
+    out.putByte(myDividerChangeCounter);
+
+    out.putByte(myDecodesOffset);
+
+    out.putByte(myPatternOld);
+    out.putByte(myPatternNew);
+    out.putByte(myPattern);
+
+    out.putBool(myIsReflected);
+    out.putBool(myIsDelaying);
+    out.putBool(myInvertedPhaseClock);
+    out.putBool(myUseLateRespx);
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA_Player::save\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Player::load(Serializer& in)
+{
+  try
+  {
+    collision = Bitmask::from_underlying<CollisionMask>(in.getShort());
+    myCollisionMaskDisabled = Bitmask::from_underlying<CollisionMask>(in.getShort());
+    myCollisionMaskEnabled = Bitmask::from_underlying<CollisionMask>(in.getShort());
+
+    myColor = in.getByte();
+    myObjectColor = in.getByte();  myDebugColor = in.getByte();
+    myDebugEnabled = in.getBool();
+
+    myIsSuppressed = in.getBool();
+
+    myHmmClocks = in.getByte();
+    myCounter = in.getByte();
+    isMoving = in.getBool();
+
+    myIsRendering = in.getBool();
+    myRenderCounter = in.getByte();
+    myRenderCounterTripPoint = in.getByte();
+    myCopy = in.getByte();
+    myDivider = in.getByte();
+    myDividerPending = in.getByte();
+    // Masked as myDecodesOffset is below: used as a shift count (1 <<
+    // mySampleCounter) in tick(), so a corrupt save file must not push it
+    // past the 8 pixels a player sprite actually has
+    mySampleCounter = in.getByte() & 0x07U;
+    myDividerChangeCounter = in.getByte();
+
+    // Mask as in setNusiz(); the decode table has only 8 entries, so an
+    // out-of-range offset from a corrupt save file must not index past it
+    myDecodesOffset = in.getByte() & 0x07U;
+    myDecodes = DrawCounterDecodes::get().playerDecodes()[myDecodesOffset];
+
+    myPatternOld = in.getByte();
+    myPatternNew = in.getByte();
+    myPattern = in.getByte();
+
+    myIsReflected = in.getBool();
+    myIsDelaying = in.getBool();
+    myInvertedPhaseClock = in.getBool();
+    myUseLateRespx = in.getBool();
+
+    applyColors();
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA_Player::load\n";
+    return false;
+  }
+
+  return true;
+}

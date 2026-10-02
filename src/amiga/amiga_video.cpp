@@ -17,10 +17,14 @@
 #include "amiga_video_tex.h"
 #include "amiga_config.h"
 #include "amiga_debug.h"
+#include "src/monitor_phosphor.h"
 
 extern "C" {
 #include "third_party/common/circle.h"
 #include "third_party/common/emux_api.h"
+#include "third_party/common/ui.h"
+extern struct menu_item *h_border_item[];
+extern struct menu_item *v_border_item[];
 }
 
 #include <circle/timer.h>
@@ -58,6 +62,9 @@ int s_col_con = 1000;
 int s_col_gam = 1000;
 int s_col_tin = 1000;
 int s_col_sat = 1000;
+// Active CRT monitor type (staged via settings before video_init; the
+// per-pixel mapping below reads it live, so menu changes apply instantly).
+int s_monitor = BMX_MONITOR_COLOR;
 uint8_t s_chan_lut[256] = {0};
 float s_hue_mat[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 
@@ -124,7 +131,8 @@ inline void split_channels(uint32_t v, int *r, int *g, int *b) {
 inline uint16_t rgba32_to_565(uint32_t v) {
   int r = 0, g = 0, b = 0;
   split_channels(v, &r, &g, &b);
-  return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+  return bmx_monitor_map_565(
+      (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)), s_monitor);
 }
 
 uint16_t rgba32_to_565_adjusted(uint32_t v) {
@@ -151,7 +159,8 @@ uint16_t rgba32_to_565_adjusted(uint32_t v) {
   const int ri = (int)(clamp01(r) * 31.0f + 0.5f);
   const int gi = (int)(clamp01(g) * 63.0f + 0.5f);
   const int bi = (int)(clamp01(b) * 31.0f + 0.5f);
-  return (uint16_t)((ri << 11) | (gi << 5) | bi);
+  return bmx_monitor_map_565((uint16_t)((ri << 11) | (gi << 5) | bi),
+                             s_monitor);
 }
 
 }  // namespace
@@ -170,16 +179,19 @@ void video_init(void) {
 
   canvas_state[VIC_INDEX].fb_width = kFbW;
   canvas_state[VIC_INDEX].fb_height = kFbH;
-  // Sampled content size: must match the blit origin/size below so the
-  // scaler (and h/v-stretch) operate on content, not letterbox.
-  canvas_state[VIC_INDEX].gfx_w = 832;
-  canvas_state[VIC_INDEX].gfx_h = 286;
-  canvas_state[VIC_INDEX].max_border_w = 0;
-  canvas_state[VIC_INDEX].max_border_h = 0;
+  // Sampled content size: the standard non-overscan playfield (640x256
+  // hires px) centered in the full 832x286 PAL frame, so the H/V Border
+  // menu sliders trim real border (96/15 px max each side). At the
+  // default (border=max) the sampled window is the full frame, exactly
+  // like before; lowering trims the stretched sides.
+  canvas_state[VIC_INDEX].gfx_w = 640;
+  canvas_state[VIC_INDEX].gfx_h = 256;
+  canvas_state[VIC_INDEX].border_w = (832 - 640) / 2;
+  canvas_state[VIC_INDEX].border_h = (286 - 256) / 2;
+  canvas_state[VIC_INDEX].max_border_w = canvas_state[VIC_INDEX].border_w;
+  canvas_state[VIC_INDEX].max_border_h = canvas_state[VIC_INDEX].border_h;
   canvas_state[VIC_INDEX].max_padding_w = 0;
   canvas_state[VIC_INDEX].max_padding_h = 0;
-  canvas_state[VIC_INDEX].border_w = 0;
-  canvas_state[VIC_INDEX].border_h = 0;
 
   s_fb = pixels;
   s_fb_pitch = pitch;
@@ -192,7 +204,46 @@ void video_init(void) {
   // letterbox as one frame -> picture squeezed into the upper half until
   // the user nudges h/v-stretch (which re-runs do_video_settings).
   // Same pattern as VICE draw_buffer_alloc -> emux_frame_buffer_changed.
+  // This publishes the canvas maxes to the menu (fresh installs baked
+  // value=0/max=0 at menu-build time while the canvas was still 0x0).
   emux_frame_buffer_changed(FB_LAYER_VIC);
+  // Now that the menu maxes are real, restore the intended full-border
+  // default on fresh installs - but ONLY when no saved settings exist
+  // yet, so a user's previously saved border trim is never clobbered
+  // on boot. Re-applies when something changed so the first presented
+  // frame already uses the restored values.
+  {
+    static bool s_border_defaulted = false;
+    if (!s_border_defaulted) {
+      s_border_defaulted = true;
+      FILE *probe = fopen("/settings/settings-amiga.txt", "rb");
+      if (probe == nullptr) {
+        probe = fopen("/settings-amiga.txt", "rb");
+      }
+      const bool have_saved = (probe != nullptr);
+      if (probe != nullptr) {
+        fclose(probe);
+      }
+      bool changed = false;
+      if (!have_saved) {
+        if (h_border_item[VIC_INDEX] != nullptr &&
+            h_border_item[VIC_INDEX]->value == 0 &&
+            h_border_item[VIC_INDEX]->max > 0) {
+          h_border_item[VIC_INDEX]->value = h_border_item[VIC_INDEX]->max;
+          changed = true;
+        }
+        if (v_border_item[VIC_INDEX] != nullptr &&
+            v_border_item[VIC_INDEX]->value == 0 &&
+            v_border_item[VIC_INDEX]->max > 0) {
+          v_border_item[VIC_INDEX]->value = v_border_item[VIC_INDEX]->max;
+          changed = true;
+        }
+      }
+      if (changed) {
+        emux_frame_buffer_changed(FB_LAYER_VIC);
+      }
+    }
+  }
 
   s_tex_fmt = video_tex_format();
   debug_log("Amiga video_init: tex_format=%d (0=ABGR,1=ARGB,2=RGBA)", s_tex_fmt);
@@ -321,6 +372,15 @@ void video_get_color_adjustments(int *brightness, int *contrast, int *gamma,
     *saturation = s_col_sat;
   }
 }
+
+void video_set_monitor(int mode) {
+  if (!bmx_monitor_valid(mode)) {
+    return;
+  }
+  s_monitor = mode;
+}
+
+int video_get_monitor(void) { return s_monitor; }
 
 bool video_save_screenshot(const char *path) {
   if (s_fb == NULL || path == NULL) {

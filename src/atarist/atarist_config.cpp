@@ -6,7 +6,7 @@
 // Boots the vendored Hatari 2.6.1 core through its own Main_Init() (fake
 // argv carries --tos/--machine/--memsize), exactly like the libretro port's
 // retro_init(). TOS selection: EmuTOS default plus the genuine pool in
-// /roms/tos, switchable live from the Machine menu.
+// /roms/ATARIST, switchable live from the Machine menu.
 //
 
 #include "atarist_config.h"
@@ -39,8 +39,8 @@ bool s_ready = false;
 bool s_ntsc = false;
 
 // TOS boot image on the SD card (staged from third_party/hatari/emutos/
-// into /roms/tos/).
-const char *kEmuTosPath = "/roms/tos/etos512uk.img";
+// into /roms/ATARIST/).
+const char *kEmuTosPath = "/roms/ATARIST/etos512uk.img";
 
 bool file_present(const char *path) {
   FILE *fp = fopen(path, "rb");
@@ -52,7 +52,7 @@ bool file_present(const char *path) {
 }
 
 // TOS pool: EmuTOS (index 0, resolved default) plus every other *.img in
-// /roms/tos, sorted. Scanned lazily so the menu (built
+// /roms/ATARIST, sorted. Scanned lazily so the menu (built
 // before config_init) already sees the pool.
 const int kMaxTos = 16;
 char s_tos_paths[kMaxTos][64] = {{0}};
@@ -87,7 +87,7 @@ void scan_tos_pool(void) {
     return;
   }
   // Genuine pool, sorted by filename, EmuTOS file itself skipped.
-  static const char *pool_dirs[] = {"/roms/tos"};
+  static const char *pool_dirs[] = {"/roms/ATARIST"};
   char found[kMaxTos][64];
   int nfound = 0;
   for (size_t d = 0; d < sizeof(pool_dirs) / sizeof(pool_dirs[0]); d++) {
@@ -182,7 +182,7 @@ bool config_init(const Config &config) {
     scan_tos_pool();
   }
   if (s_tos_count == 0) {
-    debug_log("config_init: FATAL missing TOS image '%s' (stage /roms/tos first)",
+    debug_log("config_init: FATAL missing TOS image '%s' (stage /roms/ATARIST first)",
               kEmuTosPath);
     return false;
   }

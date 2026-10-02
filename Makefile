@@ -144,12 +144,14 @@ $(error BMX_SID_WORKER=1 requires BMX_EMU_MULTICORE=1)
 endif
 endif
 
-ifeq ($(BOARD),pi4)
+ifeq ($(BOARD),pi3)
+RASPPI := 3
+else ifeq ($(BOARD),pi4)
 RASPPI := 4
 else ifeq ($(BOARD),pi5)
 RASPPI := 5
 else
-$(error Unsupported BOARD '$(BOARD)'; supported boards are pi4 and pi5)
+$(error Unsupported BOARD '$(BOARD)'; supported boards are pi3, pi4 and pi5)
 endif
 
 BUILD_BOARD ?= $(if $(BOARD),$(BOARD),raspi$(RASPPI))
@@ -158,7 +160,15 @@ BMX_COMMON_BUILD_DIR ?= $(BUILD_DIR)
 BMC64_COMMON_LIB ?= third_party/common/libbmc64common.a
 BMX_GENERATE_LISTING ?= 1
 
-ifeq ($(strip $(RASPPI)),4)
+ifeq ($(strip $(RASPPI)),3)
+# Pi3: 32-bit only, VideoCore IV firmware dispmanx + legacy GLES2
+# (same maximal-GPU legacy path as Pi4 AArch32, kernel7l.img).
+ifneq ($(strip $(AARCH)),32)
+$(error Pi3 builds require AARCH=32)
+endif
+TARGET_BASENAME ?= kernel7l
+C_STANDARD += -Wno-incompatible-pointer-types
+else ifeq ($(strip $(RASPPI)),4)
 ifneq ($(filter $(strip $(AARCH)),32 64),$(strip $(AARCH)))
 $(error Pi4 builds require AARCH=32 or AARCH=64)
 endif
@@ -177,6 +187,59 @@ TARGET ?= $(BUILD_DIR)/$(TARGET_BASENAME)
 .DEFAULT_GOAL := $(TARGET).img
 
 ATARI800_SRC_DIR = third_party/atari800/src
+A2600_SRC_DIR = src/a2600
+STELLA_SRC_DIR = third_party/stella
+# Stella includes headers by bare name; generate one -I per directory.
+# src/a2600 is FIRST so the BMX backend header wins if ever shadowed.
+STELLA_INCLUDE_DIRS = -I$(A2600_SRC_DIR) -I$(STELLA_SRC_DIR)/emucore \
+	-I$(STELLA_SRC_DIR)/emucore/tia -I$(STELLA_SRC_DIR)/emucore/elf \
+	-I$(STELLA_SRC_DIR)/common -I$(STELLA_SRC_DIR)/common/tv_filters \
+	-I$(STELLA_SRC_DIR)/lib/json -I$(STELLA_SRC_DIR)/lib
+# Upstream libretro port builds with C++23 + no RTTI; same here.
+# __BMX__ selects our OSystem/EventHandler/FBBackend/Sound in the
+# vendored MediaFactory.hxx. SOUND_SUPPORT enables the real TIA mix.
+STELLA_DEFS = -D__BMX__ -DSOUND_SUPPORT
+STELLA_CXXFLAGS = -std=c++23 -fno-rtti -Wno-error -Wno-unused-parameter
+# Forced prefix for vendored Stella objects only (never for BMX glue):
+# no-op std::mutex stand-ins, since bare-metal newlib has no <mutex>.
+STELLA_FORCE_INCLUDE = -include third_party/stella/bmx-shim/stella_prefix.h
+# Vendored Stella core objects (emucore all, common subset: no SDL, no
+# libretro frontend, no main(); tv_filters for the NTSC palette path).
+STELLA_UPSTREAM_OBJS = $(patsubst $(STELLA_SRC_DIR)/%.cxx,stella-upstream/%.o,$(STELLA_EMUCORE_SRCS) $(STELLA_COMMON_SRCS))
+STELLA_EMUCORE_SRCS = $(filter-out %/elf/EncodingTest.cxx %/elf/LinkerTest.cxx %/EmulationWorker.cxx %/OSystemStandalone.cxx %/ProfilingRunner.cxx,$(shell find $(STELLA_SRC_DIR)/emucore -name "*.cxx" | sort))
+STELLA_COMMON_SRCS = $(STELLA_SRC_DIR)/common/AudioQueue.cxx \
+	$(STELLA_SRC_DIR)/common/AudioSettings.cxx \
+	$(STELLA_SRC_DIR)/common/Base.cxx \
+	$(STELLA_SRC_DIR)/common/Bezel.cxx \
+	$(STELLA_SRC_DIR)/common/DevSettingsHandler.cxx \
+	$(STELLA_SRC_DIR)/common/FpsMeter.cxx \
+	$(STELLA_SRC_DIR)/common/HighScoresManager.cxx \
+	$(STELLA_SRC_DIR)/common/JoyMap.cxx \
+	$(STELLA_SRC_DIR)/common/KeyMap.cxx \
+	$(STELLA_SRC_DIR)/common/Logger.cxx \
+	$(STELLA_SRC_DIR)/common/MouseControl.cxx \
+	$(STELLA_SRC_DIR)/common/PaletteHandler.cxx \
+	$(STELLA_SRC_DIR)/common/PhosphorHandler.cxx \
+	$(STELLA_SRC_DIR)/common/PhysicalJoystick.cxx \
+	$(STELLA_SRC_DIR)/common/PJoystickHandler.cxx \
+	$(STELLA_SRC_DIR)/common/PKeyboardHandler.cxx \
+	$(STELLA_SRC_DIR)/common/PNGLibrary.cxx \
+	$(STELLA_SRC_DIR)/common/RewindManager.cxx \
+	$(STELLA_SRC_DIR)/common/StaggeredLogger.cxx \
+	$(STELLA_SRC_DIR)/common/StateManager.cxx \
+	$(STELLA_SRC_DIR)/common/VideoModeHandler.cxx \
+	$(STELLA_SRC_DIR)/common/tv_filters/NTSCFilter.cxx \
+	$(STELLA_SRC_DIR)/common/repository/CompositeKeyValueRepository.cxx \
+	$(STELLA_SRC_DIR)/common/repository/CompositeKVRJsonAdapter.cxx \
+	$(STELLA_SRC_DIR)/common/repository/KeyValueRepositoryConfigfile.cxx \
+	$(STELLA_SRC_DIR)/common/repository/KeyValueRepositoryJsonFile.cxx \
+	$(STELLA_SRC_DIR)/common/repository/KeyValueRepositoryPropertyFile.cxx
+ZXSPECTRUM_SRC_DIR = third_party/zesarux
+# ZEsarUX includes headers by bare name from every subdir (like vAmiga);
+# generate one -I per directory. bmx-shim first for compileoptions.h.
+ZXSPECTRUM_SHIM_DIR = third_party/zesarux/bmx-shim
+ZXSPECTRUM_INCLUDE_DIRS = -I$(ZXSPECTRUM_SHIM_DIR) -I$(ZXSPECTRUM_SRC_DIR) \
+	$(shell find $(ZXSPECTRUM_SRC_DIR) -type d | sed 's/^/-I/' | sort -u)
 DOS_SRC_DIR = src/dos
 ATARIST_SRC_DIR = src/atarist
 ATARIST_X_SRC_DIR = third_party/hatari/src
@@ -221,6 +284,16 @@ VAMIGA_CXXFLAGS = -std=c++20 -fconcepts -Wno-error -Wno-unused-parameter -Wno-re
 VAMIGA_EXCLUDE = %/Headless.cpp %/Misc/RemoteServers/HttpTransport.cpp
 VAMIGA_ALL_SRCS = $(filter-out $(VAMIGA_EXCLUDE),$(shell find $(VAMIGA_CORE_DIR) -name "*.cpp" | sort))
 VAMIGA_ALL_CSRCS = $(shell find $(VAMIGA_CORE_DIR)/utlib/thirdparty -maxdepth 1 -name "*.c" | sort)
+# xDMS unpacker (memory-to-memory extractDMS used by rvlib DMSFile; the CLI
+# main in xdms.c, the legacy _old_pfile.c and the host-only maketbl tool
+# are excluded).
+VAMIGA_XDMS_DIR = $(VAMIGA_CORE_DIR)/rvlib/ThirdParty/xdms
+VAMIGA_ALL_CSRCS += $(VAMIGA_XDMS_DIR)/pfile.c \
+	$(VAMIGA_XDMS_DIR)/u_init.c $(VAMIGA_XDMS_DIR)/u_rle.c \
+	$(VAMIGA_XDMS_DIR)/u_quick.c $(VAMIGA_XDMS_DIR)/u_medium.c \
+	$(VAMIGA_XDMS_DIR)/u_deep.c $(VAMIGA_XDMS_DIR)/u_heavy.c \
+	$(VAMIGA_XDMS_DIR)/getbits.c $(VAMIGA_XDMS_DIR)/crc_csum.c \
+	$(VAMIGA_XDMS_DIR)/tables.c $(VAMIGA_XDMS_DIR)/maketbl.c
 VAMIGA_UPSTREAM_OBJS = $(patsubst $(VAMIGA_CORE_DIR)/%.cpp,vamiga-upstream/%.o,$(VAMIGA_ALL_SRCS)) \
 	$(patsubst $(VAMIGA_CORE_DIR)/%.c,vamiga-upstream/%.o,$(VAMIGA_ALL_CSRCS))
 DOS_X_SRC_DIR = third_party/dosbox-x/src
@@ -249,6 +322,7 @@ ifeq ($(MACHINE_CLASS),RASPI_ATARI800)
 
 # ATARI800 build: exclude VICE-specific objects, include atari800 core
 BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o viceapp.o \
+             crt_pi_idx.o crt_pi_rgb.o \
              vicesound.o new_io.o errno_stubs.o async_network.o \
              config/runtime_config.o machines/machine_descriptor.o \
              network/network_service.o \
@@ -367,6 +441,7 @@ ifeq ($(MACHINE_CLASS),RASPI_DOS)
 # DOS build: exclude VICE-specific objects, placeholder compiled
 # from src/dos only (no vendored core yet).
 BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o viceapp.o \
+             crt_pi_idx.o crt_pi_rgb.o \
              vicesound.o new_io.o errno_stubs.o async_network.o \
              config/runtime_config.o machines/machine_descriptor.o \
              network/network_service.o \
@@ -536,6 +611,7 @@ ifeq ($(MACHINE_CLASS),RASPI_ATARIST)
 # CPU tables (cpustbl/cpuemu_*) are generated by host tools into
 # third_party/hatari/gen (see ATARIST_GEN rules below).
 BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o viceapp.o \
+             crt_pi_idx.o crt_pi_rgb.o \
              vicesound.o new_io.o errno_stubs.o async_network.o \
              config/runtime_config.o machines/machine_descriptor.o \
              network/network_service.o \
@@ -705,6 +781,7 @@ ifeq ($(MACHINE_CLASS),RASPI_AMIGA)
 # OCS subset; desktop facade + emulator thread + httplib transport
 # excluded, see VAMIGA_EXCLUDE and third_party/vamiga/README.BMX).
 BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o viceapp.o \
+             crt_pi_idx.o crt_pi_rgb.o \
              vicesound.o new_io.o errno_stubs.o async_network.o \
              config/runtime_config.o machines/machine_descriptor.o \
              network/network_service.o \
@@ -763,6 +840,323 @@ BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o vi
              amiga/amiga_bmx_stubs.o \
              $(VAMIGA_UPSTREAM_OBJS)
 
+else
+ifeq ($(MACHINE_CLASS),RASPI_ZXSPECTRUM)
+
+# ZXSPECTRUM build: exclude VICE-specific objects; BMX glue from
+# src/zxspectrum plus the vendored ZEsarUX spectrum subset
+# (third_party/zesarux, reduced core; see third_party/zesarux/README.BMX).
+BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o viceapp.o \
+             crt_pi_idx.o crt_pi_rgb.o \
+             vicesound.o new_io.o errno_stubs.o async_network.o \
+             config/runtime_config.o machines/machine_descriptor.o \
+             network/network_service.o \
+             platform/platform.o \
+             remote/circle_discovery_responder.o \
+	             remote/bounded_json_writer.o \
+	             remote/circle_http_transport.o remote/command_mailbox.o \
+	             remote/bmx_api_router.o \
+	             remote/remote_capture.o \
+             remote/developer_discovery_codec.o \
+             remote/developer_file_transaction.o \
+             remote/developer_log_device.o remote/developer_log_ring.o \
+             remote/circle_usb_diagnostic_adapter.o \
+             remote/developer_usb_diagnostic.o \
+             remote/developer_router.o remote/developer_ui_router.o \
+	             remote/file_response_stream.o \
+             remote/http_parser.o \
+             remote/http_response_writer.o remote/http_router.o \
+             remote/http_server.o remote/http_types.o \
+             remote/remote_service.o remote/v3d_test_status.o \
+             update/build_info.o update/body_sinks.o \
+             update/circle_secure_stream.o \
+             update/config_migration.o update/config_schema.o \
+             update/draft_test_ticket.o \
+             update/fat_path_policy.o \
+             update/github_ca_bundle.o \
+             update/fatfs_config_snapshot.o \
+             update/fatfs_update_filesystem.o \
+             update/fatfs_update_storage.o \
+             update/github_draft_client.o update/github_release_client.o \
+             update/github_release_parser.o \
+             update/http_response_parser.o update/https_stream.o \
+             update/atarimania_client.o \
+             update/netcheck.o \
+             update/json_parser.o \
+             update/release_manifest.o update/release_offer.o \
+             update/simple_update_installer.o \
+             update/sha256.o update/signature_envelope.o \
+             update/signature_verifier.o \
+             update/trust_store.o \
+             update/update_foreground_progress.o \
+             update/menu_update_progress_bridge.o \
+             update/update_policy.o \
+             update/update_service.o update/update_types.o \
+             update/url_policy.o update/zip_reader.o \
+             update/zipbrowse.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpu.o \
+             $(ZXSPECTRUM_SRC_DIR)/operaciones.o \
+             $(ZXSPECTRUM_SRC_DIR)/ula.o \
+             $(ZXSPECTRUM_SRC_DIR)/contend.o \
+             $(ZXSPECTRUM_SRC_DIR)/mem128.o \
+             $(ZXSPECTRUM_SRC_DIR)/settings.o \
+             $(ZXSPECTRUM_SRC_DIR)/charset.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpus/z80_codsinpr.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpus/z80_codpred.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpus/z80_codprddfd.o \
+             $(ZXSPECTRUM_SRC_DIR)/cores/core_reduced_spectrum.o \
+             $(ZXSPECTRUM_SRC_DIR)/cores/core_spectrum.o \
+             $(ZXSPECTRUM_SRC_DIR)/video/screen.o \
+             $(ZXSPECTRUM_SRC_DIR)/audio/audio.o \
+             $(ZXSPECTRUM_SRC_DIR)/audio/audio_sine_table.o \
+             $(ZXSPECTRUM_SRC_DIR)/audio/audionull.o \
+             $(ZXSPECTRUM_SRC_DIR)/soundchips/ay38912.o \
+             zxspectrum/zx_emulator_core.o \
+             zxspectrum/zx_video.o \
+             zxspectrum/zx_sound.o \
+             zxspectrum/zx_input.o \
+             zxspectrum/zx_machine.o \
+             zxspectrum/zx_tape.o \
+             zxspectrum/zx_timer.o \
+             zxspectrum/zx_shim.o \
+             zxspectrum/zx_autostub.o \
+             zxspectrum/zx_config.o \
+             zxspectrum/zx_menu.o \
+             zxspectrum/zx_debug.o \
+             zxspectrum/zx_bridge.o
+
+else
+ifeq ($(MACHINE_CLASS),RASPI_CPC)
+
+# CPC build: exclude VICE-specific objects; BMX glue from src/cpc, the CPC
+# hardware module, plus the vendored Z80/AY/audio subset (the same common
+# objects the ZX build uses; Spectrum-only units like ula/contend/screen
+# and the reduced Spectrum core are NOT linked here).
+BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o viceapp.o \
+             crt_pi_idx.o crt_pi_rgb.o \
+             vicesound.o new_io.o errno_stubs.o async_network.o \
+             config/runtime_config.o machines/machine_descriptor.o \
+             network/network_service.o \
+             platform/platform.o \
+             remote/circle_discovery_responder.o \
+	             remote/bounded_json_writer.o \
+	             remote/circle_http_transport.o remote/command_mailbox.o \
+	             remote/bmx_api_router.o \
+	             remote/remote_capture.o \
+             remote/developer_discovery_codec.o \
+             remote/developer_file_transaction.o \
+             remote/developer_log_device.o remote/developer_log_ring.o \
+             remote/circle_usb_diagnostic_adapter.o \
+             remote/developer_usb_diagnostic.o \
+             remote/developer_router.o remote/developer_ui_router.o \
+	             remote/file_response_stream.o \
+             remote/http_parser.o \
+             remote/http_response_writer.o remote/http_router.o \
+             remote/http_server.o remote/http_types.o \
+             remote/remote_service.o remote/v3d_test_status.o \
+             update/build_info.o update/body_sinks.o \
+             update/circle_secure_stream.o \
+             update/config_migration.o update/config_schema.o \
+             update/draft_test_ticket.o \
+             update/fat_path_policy.o \
+             update/github_ca_bundle.o \
+             update/fatfs_config_snapshot.o \
+             update/fatfs_update_filesystem.o \
+             update/fatfs_update_storage.o \
+             update/github_draft_client.o update/github_release_client.o \
+             update/github_release_parser.o \
+             update/http_response_parser.o update/https_stream.o \
+             update/atarimania_client.o \
+             update/netcheck.o \
+             update/json_parser.o \
+             update/release_manifest.o update/release_offer.o \
+             update/simple_update_installer.o \
+             update/sha256.o update/signature_envelope.o \
+             update/signature_verifier.o \
+             update/trust_store.o \
+             update/update_foreground_progress.o \
+             update/menu_update_progress_bridge.o \
+             update/update_policy.o \
+             update/update_service.o update/update_types.o \
+             update/url_policy.o update/zip_reader.o update/zipbrowse.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpu.o \
+             $(ZXSPECTRUM_SRC_DIR)/operaciones.o \
+             $(ZXSPECTRUM_SRC_DIR)/settings.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpus/z80_codsinpr.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpus/z80_codpred.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpus/z80_codprddfd.o \
+             $(ZXSPECTRUM_SRC_DIR)/audio/audio.o \
+             $(ZXSPECTRUM_SRC_DIR)/audio/audio_sine_table.o \
+             $(ZXSPECTRUM_SRC_DIR)/audio/audionull.o \
+             $(ZXSPECTRUM_SRC_DIR)/soundchips/ay38912.o \
+             cpc/cpc_emulator_core.o \
+             cpc/cpc_video.o \
+             cpc/cpc_sound.o \
+             cpc/cpc_input.o \
+             cpc/cpc_machine.o \
+             cpc/cpc_tape.o \
+             cpc/cpc_timer.o \
+             cpc/cpc_shim.o \
+             cpc/cpc_autostub.o \
+             cpc/cpc_config.o \
+             cpc/cpc_menu.o \
+             cpc/cpc_debug.o \
+             cpc/cpc_bridge.o \
+             cpc/cpc_hw.o \
+             cpc/cpc_core.o \
+             cpc/cpc_dsk.o \
+             cpc/cpc_fdc.o
+
+else
+ifeq ($(MACHINE_CLASS),RASPI_MSX)
+
+# MSX build: exclude VICE-specific objects; BMX glue from src/msx, the
+# vendored MSX hardware module (machines/msx.c) + TMS9918A renderer
+# (video_chips/vdp_9918a.c), plus the vendored Z80/AY/audio subset (the
+# same common objects the ZX/CPC builds use; Spectrum-only units like
+# ula/contend/screen and the reduced Spectrum core are NOT linked here).
+BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o viceapp.o \
+             crt_pi_idx.o crt_pi_rgb.o \
+             vicesound.o new_io.o errno_stubs.o async_network.o \
+             config/runtime_config.o machines/machine_descriptor.o \
+             network/network_service.o \
+             platform/platform.o \
+             remote/circle_discovery_responder.o \
+	             remote/bounded_json_writer.o \
+	             remote/circle_http_transport.o remote/command_mailbox.o \
+	             remote/bmx_api_router.o \
+	             remote/remote_capture.o \
+             remote/developer_discovery_codec.o \
+             remote/developer_file_transaction.o \
+             remote/developer_log_device.o remote/developer_log_ring.o \
+             remote/circle_usb_diagnostic_adapter.o \
+             remote/developer_usb_diagnostic.o \
+             remote/developer_router.o remote/developer_ui_router.o \
+	             remote/file_response_stream.o \
+             remote/http_parser.o \
+             remote/http_response_writer.o remote/http_router.o \
+             remote/http_server.o remote/http_types.o \
+             remote/remote_service.o remote/v3d_test_status.o \
+             update/build_info.o update/body_sinks.o \
+             update/circle_secure_stream.o \
+             update/config_migration.o update/config_schema.o \
+             update/draft_test_ticket.o \
+             update/fat_path_policy.o \
+             update/github_ca_bundle.o \
+             update/fatfs_config_snapshot.o \
+             update/fatfs_update_filesystem.o \
+             update/fatfs_update_storage.o \
+             update/github_draft_client.o update/github_release_client.o \
+             update/github_release_parser.o \
+             update/http_response_parser.o update/https_stream.o \
+             update/atarimania_client.o \
+             update/netcheck.o \
+             update/json_parser.o \
+             update/release_manifest.o update/release_offer.o \
+             update/simple_update_installer.o \
+             update/sha256.o update/signature_envelope.o \
+             update/signature_verifier.o \
+             update/trust_store.o \
+             update/update_foreground_progress.o \
+             update/menu_update_progress_bridge.o \
+             update/update_policy.o \
+             update/update_service.o update/update_types.o \
+             update/url_policy.o update/zip_reader.o update/zipbrowse.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpu.o \
+             $(ZXSPECTRUM_SRC_DIR)/operaciones.o \
+             $(ZXSPECTRUM_SRC_DIR)/settings.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpus/z80_codsinpr.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpus/z80_codpred.o \
+             $(ZXSPECTRUM_SRC_DIR)/cpus/z80_codprddfd.o \
+             $(ZXSPECTRUM_SRC_DIR)/audio/audio.o \
+             $(ZXSPECTRUM_SRC_DIR)/audio/audio_sine_table.o \
+             $(ZXSPECTRUM_SRC_DIR)/audio/audionull.o \
+             $(ZXSPECTRUM_SRC_DIR)/soundchips/ay38912.o \
+             $(ZXSPECTRUM_SRC_DIR)/machines/msx.o \
+             $(ZXSPECTRUM_SRC_DIR)/video_chips/vdp_9918a.o \
+             msx/msx_emulator_core.o \
+             msx/msx_video.o \
+             msx/msx_sound.o \
+             msx/msx_input.o \
+             msx/msx_machine.o \
+             msx/msx_tape.o \
+             msx/msx_cart.o \
+             msx/msx_timer.o \
+             msx/msx_shim.o \
+             msx/msx_autostub.o \
+             msx/msx_config.o \
+             msx/msx_menu.o \
+             msx/msx_debug.o \
+             msx/msx_bridge.o \
+             msx/msx_core.o
+
+else
+ifeq ($(MACHINE_CLASS),RASPI_A2600)
+
+# A2600 build: exclude VICE-specific objects; BMX glue from src/a2600,
+# the BMX Stella backend (a2600_stella_backend) plus the vendored Stella
+# 8.0 emucore + common subset (STELLA_*_SRCS above; no SDL, no libretro
+# frontend, no debugger/gui/cheat).
+BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o viceapp.o \
+             crt_pi_idx.o crt_pi_rgb.o \
+             vicesound.o new_io.o errno_stubs.o async_network.o \
+             config/runtime_config.o machines/machine_descriptor.o \
+             network/network_service.o \
+             platform/platform.o \
+             remote/circle_discovery_responder.o \
+	             remote/bounded_json_writer.o \
+	             remote/circle_http_transport.o remote/command_mailbox.o \
+	             remote/bmx_api_router.o \
+	             remote/remote_capture.o \
+             remote/developer_discovery_codec.o \
+             remote/developer_file_transaction.o \
+             remote/developer_log_device.o remote/developer_log_ring.o \
+             remote/circle_usb_diagnostic_adapter.o \
+             remote/developer_usb_diagnostic.o \
+             remote/developer_router.o remote/developer_ui_router.o \
+	             remote/file_response_stream.o \
+             remote/http_parser.o \
+             remote/http_response_writer.o remote/http_router.o \
+             remote/http_server.o remote/http_types.o \
+             remote/remote_service.o remote/v3d_test_status.o \
+             update/build_info.o update/body_sinks.o \
+             update/circle_secure_stream.o \
+             update/config_migration.o update/config_schema.o \
+             update/draft_test_ticket.o \
+             update/fat_path_policy.o \
+             update/github_ca_bundle.o \
+             update/fatfs_config_snapshot.o \
+             update/fatfs_update_filesystem.o \
+             update/fatfs_update_storage.o \
+             update/github_draft_client.o update/github_release_client.o \
+             update/github_release_parser.o \
+             update/http_response_parser.o update/https_stream.o \
+             update/atarimania_client.o \
+             update/netcheck.o \
+             update/json_parser.o \
+             update/release_manifest.o update/release_offer.o \
+             update/simple_update_installer.o \
+             update/sha256.o update/signature_envelope.o \
+             update/signature_verifier.o \
+             update/trust_store.o \
+             update/update_foreground_progress.o \
+             update/menu_update_progress_bridge.o \
+             update/update_policy.o \
+             update/update_service.o update/update_types.o \
+             update/url_policy.o update/zip_reader.o update/zipbrowse.o \
+             $(STELLA_UPSTREAM_OBJS) \
+             a2600/a2600_emulator_core.o \
+             a2600/a2600_video.o \
+             a2600/a2600_sound.o \
+             a2600/a2600_input.o \
+             a2600/a2600_cart.o \
+             a2600/a2600_timer.o \
+             a2600/a2600_config.o \
+             a2600/a2600_menu.o \
+             a2600/a2600_debug.o \
+             a2600/a2600_bridge.o \
+             a2600/a2600_stella_backend.o
+
 else # VICE
 
 # VICE-based build (C64, C128, etc.)
@@ -814,6 +1208,10 @@ BMC64_OBJS = main.o kernel.o mouse_input.o usb_keyboard_state.o viceoptions.o vi
              update/update_service.o update/update_types.o \
              update/url_policy.o update/zip_reader.o update/zipbrowse.o
 
+endif
+endif
+endif
+endif
 endif
 endif
 endif
@@ -872,14 +1270,14 @@ OBJS	+= $(BMX_COMMON_BUILD_DIR)/v3dcrt/rgba8_texture_layout.o
 OBJS	+= $(BMX_COMMON_BUILD_DIR)/v3dcrt/output_response.o
 OBJS	+= $(BMX_COMMON_BUILD_DIR)/v3dcrt/shaders/shader_package.o
 OBJS	+= $(BMX_COMMON_BUILD_DIR)/kms/kms_mode.o
-ifeq ($(filter RASPI_ATARI800 RASPI_DOS RASPI_ATARIST RASPI_AMIGA,$(MACHINE_CLASS)),)
+ifeq ($(filter RASPI_ATARI800 RASPI_DOS RASPI_ATARIST RASPI_AMIGA RASPI_ZXSPECTRUM RASPI_CPC RASPI_MSX RASPI_A2600,$(MACHINE_CLASS)),)
 OBJS	+= $(BMX_COMMON_BUILD_DIR)/viceemulatorcore.o
 ifneq ($(wildcard $(VICE_SOURCE)/blockdev.h),)
 OBJS	+= $(BMX_COMMON_BUILD_DIR)/vice_blockdev.o
 endif
 endif
 ifeq ($(RASPPI),5)
-ifeq ($(filter RASPI_ATARI800 RASPI_DOS RASPI_ATARIST RASPI_AMIGA,$(MACHINE_CLASS)),)
+ifeq ($(filter RASPI_ATARI800 RASPI_DOS RASPI_ATARIST RASPI_AMIGA RASPI_ZXSPECTRUM RASPI_CPC RASPI_MSX RASPI_A2600,$(MACHINE_CLASS)),)
 ifneq ($(wildcard $(VICE)/arch/shared/sounddrv/libsounddrv.a),)
 else ifneq ($(wildcard $(VICE)/arch/shared/sounddrv/soundraspi.o),)
 VICELIBS += $(VICE)/arch/shared/sounddrv/soundraspi.o
@@ -897,6 +1295,11 @@ OBJS += $(BMX_COMMON_BUILD_DIR)/fbl_native_kms.o \
 	$(BMX_COMMON_BUILD_DIR)/pi5v3d/pi5_v3d_shader.o \
 	$(BMX_COMMON_BUILD_DIR)/pi5v3d/shaders/pi5_shader_package_adapter.o \
 	$(BMX_COMMON_BUILD_DIR)/pi5v3d/shaders/shader_artifact_materializer.o
+else ifeq ($(RASPPI),3)
+# Pi3: pure VideoCore IV firmware path (dispmanx + GLES2 + crt-pi).
+# pi4kms/pi4v3d are BCM2711-specific and do not compile for BCM2710;
+# all their call sites in fbl.cpp are #if RASPPI==4-guarded.
+OBJS += $(BMX_COMMON_BUILD_DIR)/fbl.o
 else ifeq ($(AARCH),64)
 OBJS += $(BMX_COMMON_BUILD_DIR)/fbl_native_kms.o \
 	$(BMX_COMMON_BUILD_DIR)/pi4kms/pi4_native_kms.o \
@@ -948,8 +1351,8 @@ CPPFLAGS += -DBMX_EMU_MULTICORE=$(BMX_EMU_MULTICORE) \
 	-DBMX_SID_WORKER=$(BMX_SID_WORKER) \
 	-DBMX_SID_DIAGNOSTICS=$(BMX_SID_DIAGNOSTICS) \
 	-DBMX_V3D_RENDER_TEST_KERNEL=$(BMX_V3D_RENDER_TEST_KERNEL) \
-	-DBMX_PI4_LEGACY_DISPLAY=$(if $(filter 4-32,$(RASPPI)-$(AARCH)),1,0)
-CFLAGS += -DBMX_PI4_LEGACY_DISPLAY=$(if $(filter 4-32,$(RASPPI)-$(AARCH)),1,0)
+	-DBMX_PI4_LEGACY_DISPLAY=$(if $(filter 3-32 4-32,$(RASPPI)-$(AARCH)),1,0)
+CFLAGS += -DBMX_PI4_LEGACY_DISPLAY=$(if $(filter 3-32 4-32,$(RASPPI)-$(AARCH)),1,0)
 
 # Build stamp for the About menu (re-evaluated every make invocation, so it
 # is always fresh): "DD.MM.YYYY HH:MM <short-hash>".
@@ -1113,6 +1516,14 @@ else ifeq ($(MACHINE_CLASS),RASPI_ATARIST)
 ATARI800_IMAGECONTENTS_LIB :=
 else ifeq ($(MACHINE_CLASS),RASPI_AMIGA)
 ATARI800_IMAGECONTENTS_LIB :=
+else ifeq ($(MACHINE_CLASS),RASPI_ZXSPECTRUM)
+ATARI800_IMAGECONTENTS_LIB :=
+else ifeq ($(MACHINE_CLASS),RASPI_CPC)
+ATARI800_IMAGECONTENTS_LIB :=
+else ifeq ($(MACHINE_CLASS),RASPI_MSX)
+ATARI800_IMAGECONTENTS_LIB :=
+else ifeq ($(MACHINE_CLASS),RASPI_A2600)
+ATARI800_IMAGECONTENTS_LIB :=
 else
 ATARI800_IMAGECONTENTS_LIB := $(VICE)/imagecontents/libimagecontents.a
 endif
@@ -1136,7 +1547,21 @@ ifeq ($(MACHINE_CLASS),RASPI_AMIGA)
 LDFLAGS += --allow-multiple-definition
 endif
 
+# ZXSPECTRUM only: the ZEsarUX timer shim (zx_timer.o) defines init_timer,
+# which duplicates linuxemu's timer.o once something else pulls that member
+# in. First object wins: zx_timer.o (COMMON_LIB precedes liblinuxemu.a).
+ifeq ($(MACHINE_CLASS),RASPI_ZXSPECTRUM)
+LDFLAGS += --allow-multiple-definition
+endif
+
 ifeq ($(RASPPI)-$(AARCH),4-32)
+LIBS += $(CIRCLEHOME)/addon/vc4/vchiq/libvchiq.a \
+	$(CIRCLEHOME)/addon/vc4/interface/bcm_host/libbcm_host.a \
+	$(CIRCLEHOME)/addon/vc4/interface/khronos/libkhrn_client.a \
+	$(CIRCLEHOME)/addon/vc4/interface/vcos/libvcos.a \
+	$(CIRCLEHOME)/addon/vc4/interface/vmcs_host/libvmcs_host.a
+endif
+ifeq ($(RASPPI)-$(AARCH),3-32)
 LIBS += $(CIRCLEHOME)/addon/vc4/vchiq/libvchiq.a \
 	$(CIRCLEHOME)/addon/vc4/interface/bcm_host/libbcm_host.a \
 	$(CIRCLEHOME)/addon/vc4/interface/khronos/libkhrn_client.a \
@@ -1233,10 +1658,18 @@ endif
 # the link-stub TUs (savestate/globals/ide_cdrom/deleted_owner) include
 # vendored dosbox-x headers; the other glue TUs are unaffected in practice
 # (no SDL/png/config.h names used).
+# Vendored DOSBox-X MAME cores assume 64-bit int32_t == int. On AArch32
+# int32_t is long, so pointer conversions in fmopl/ymf262 need -fpermissive
+# (Pi3 and Pi4-32 only; 64-bit builds keep strict diagnostics).
+ifeq ($(strip $(AARCH)),32)
+DOS_CXX_EXTRA := -fpermissive
+else
+DOS_CXX_EXTRA :=
+endif
 $(BUILD_DIR)/third_party/dosbox-x/%.o: third_party/dosbox-x/%.cpp | $(BUILD_DIR)
 	@echo "  CPP   $@"
 	@mkdir -p $(dir $@)
-	@$(CPP) $(DOS_INCLUDE_DIRS) $(DOS_FORCE_INCLUDE) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+	@$(CPP) $(DOS_INCLUDE_DIRS) $(DOS_FORCE_INCLUDE) $(DOS_CXX_EXTRA) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
 # Vendored C sources (AdLib backends: cqm, esfm). Same include roots, no SDL
 # stub wall (pure DSP code, no dosbox headers needing it).
 $(BUILD_DIR)/third_party/dosbox-x/%.o: third_party/dosbox-x/%.c | $(BUILD_DIR)
@@ -1341,7 +1774,7 @@ ifneq ($(abspath $(BMX_COMMON_BUILD_DIR)),$(abspath $(BUILD_DIR)))
 $(BMX_COMMON_BUILD_DIR)/third_party/dosbox-x/%.o: third_party/dosbox-x/%.cpp | $(BMX_COMMON_BUILD_DIR)
 	@echo "  CPP   $@"
 	@mkdir -p $(dir $@)
-	@$(CPP) $(DOS_INCLUDE_DIRS) $(DOS_FORCE_INCLUDE) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+	@$(CPP) $(DOS_INCLUDE_DIRS) $(DOS_FORCE_INCLUDE) $(DOS_CXX_EXTRA) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
 $(BMX_COMMON_BUILD_DIR)/third_party/dosbox-x/%.o: third_party/dosbox-x/%.c | $(BMX_COMMON_BUILD_DIR)
 	@echo "  CC    $@"
 	@mkdir -p $(dir $@)
@@ -1485,6 +1918,139 @@ $(BMX_COMMON_BUILD_DIR)/vamiga-upstream/%.o: $(VAMIGA_CORE_DIR)/%.c | $(BMX_COMM
 	@echo "  VAMIGA-C $@"
 	@mkdir -p $(dir $@)
 	@$(CC) $(CFLAGS) $(VAMIGA_INCLUDE_DIRS) -include third_party/vamiga/bmx-shim/vamiga_c_prefix.h $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+endif
+
+# ZXSPECTRUM source compile rules (machine dir + vendored ZEsarUX subset).
+# The vendored C files include upstream headers by bare name; the BMX glue
+# in src/zxspectrum includes them too, so both take ZXSPECTRUM_INCLUDE_DIRS.
+$(BUILD_DIR)/zxspectrum/%.o: $(SRC_DIR)/zxspectrum/%.cpp | $(BUILD_DIR)
+	@echo "  CPP   $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(ZXSPECTRUM_INCLUDE_DIRS) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BUILD_DIR)/zxspectrum/%.o: $(SRC_DIR)/zxspectrum/%.c | $(BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(ZXSPECTRUM_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BUILD_DIR)/third_party/zesarux/%.o: third_party/zesarux/%.c | $(BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(ZXSPECTRUM_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+# ZXSPECTRUM objects live in BMC64_COMMON_OBJS (shared across machines), so
+# they are prefixed with BMX_COMMON_BUILD_DIR at link time. Provide matching
+# pattern rules for the shared object pool.
+ifneq ($(abspath $(BMX_COMMON_BUILD_DIR)),$(abspath $(BUILD_DIR)))
+$(BMX_COMMON_BUILD_DIR)/zxspectrum/%.o: $(SRC_DIR)/zxspectrum/%.cpp | $(BMX_COMMON_BUILD_DIR)
+	@echo "  CPP   $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(ZXSPECTRUM_INCLUDE_DIRS) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BMX_COMMON_BUILD_DIR)/zxspectrum/%.o: $(SRC_DIR)/zxspectrum/%.c | $(BMX_COMMON_BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(ZXSPECTRUM_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BMX_COMMON_BUILD_DIR)/third_party/zesarux/%.o: third_party/zesarux/%.c | $(BMX_COMMON_BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(ZXSPECTRUM_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+endif
+
+# CPC source compile rules (machine dir). Same vendored include dirs as the
+# ZX build (bare-name upstream headers); the BMX glue lives in src/cpc.
+$(BUILD_DIR)/cpc/%.o: $(SRC_DIR)/cpc/%.cpp | $(BUILD_DIR)
+	@echo "  CPP   $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(ZXSPECTRUM_INCLUDE_DIRS) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BUILD_DIR)/cpc/%.o: $(SRC_DIR)/cpc/%.c | $(BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(ZXSPECTRUM_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+# CPC objects live in BMC64_COMMON_OBJS (shared across machines), so they
+# are prefixed with BMX_COMMON_BUILD_DIR at link time. Provide matching
+# pattern rules for the shared object pool.
+ifneq ($(abspath $(BMX_COMMON_BUILD_DIR)),$(abspath $(BUILD_DIR)))
+$(BMX_COMMON_BUILD_DIR)/cpc/%.o: $(SRC_DIR)/cpc/%.cpp | $(BMX_COMMON_BUILD_DIR)
+	@echo "  CPP   $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(ZXSPECTRUM_INCLUDE_DIRS) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BMX_COMMON_BUILD_DIR)/cpc/%.o: $(SRC_DIR)/cpc/%.c | $(BMX_COMMON_BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(ZXSPECTRUM_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+endif
+
+# MSX source compile rules (machine dir). Same vendored include dirs as the
+# ZX/CPC builds (bare-name upstream headers); the BMX glue lives in src/msx.
+# The vendored machines/msx.c + video_chips/vdp_9918a.c compile through the
+# generic third_party/zesarux rules above (listed explicitly in the
+# RASPI_MSX BMC64_OBJS block).
+$(BUILD_DIR)/msx/%.o: $(SRC_DIR)/msx/%.cpp | $(BUILD_DIR)
+	@echo "  CPP   $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(ZXSPECTRUM_INCLUDE_DIRS) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BUILD_DIR)/msx/%.o: $(SRC_DIR)/msx/%.c | $(BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(ZXSPECTRUM_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+# MSX objects live in BMC64_COMMON_OBJS (shared across machines), so they
+# are prefixed with BMX_COMMON_BUILD_DIR at link time. Provide matching
+# pattern rules for the shared object pool.
+ifneq ($(abspath $(BMX_COMMON_BUILD_DIR)),$(abspath $(BUILD_DIR)))
+$(BMX_COMMON_BUILD_DIR)/msx/%.o: $(SRC_DIR)/msx/%.cpp | $(BMX_COMMON_BUILD_DIR)
+	@echo "  CPP   $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(ZXSPECTRUM_INCLUDE_DIRS) $(CPPFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BMX_COMMON_BUILD_DIR)/msx/%.o: $(SRC_DIR)/msx/%.c | $(BMX_COMMON_BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(ZXSPECTRUM_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+endif
+
+# A2600 source compile rules (machine dir + vendored Stella subset).
+# Stella includes headers by bare name; the BMX backend header lives in
+# src/a2600, so STELLA_INCLUDE_DIRS covers both.
+$(BUILD_DIR)/a2600/%.o: $(SRC_DIR)/a2600/%.cpp | $(BUILD_DIR)
+	@echo "  CPP   $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(STELLA_INCLUDE_DIRS) $(STELLA_DEFS) $(CPPFLAGS) $(STELLA_FORCE_INCLUDE) $(STELLA_CXXFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BUILD_DIR)/a2600/%.o: $(SRC_DIR)/a2600/%.c | $(BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(STELLA_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BUILD_DIR)/stella-upstream/%.o: $(STELLA_SRC_DIR)/%.cxx | $(BUILD_DIR)
+	@echo "  STELLA $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(STELLA_INCLUDE_DIRS) $(STELLA_DEFS) $(CPPFLAGS) $(STELLA_FORCE_INCLUDE) $(STELLA_CXXFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+# A2600 objects live in BMC64_COMMON_OBJS (shared across machines), so they
+# are prefixed with BMX_COMMON_BUILD_DIR at link time. Provide matching
+# pattern rules for the shared object pool.
+ifneq ($(abspath $(BMX_COMMON_BUILD_DIR)),$(abspath $(BUILD_DIR)))
+$(BMX_COMMON_BUILD_DIR)/a2600/%.o: $(SRC_DIR)/a2600/%.cpp | $(BMX_COMMON_BUILD_DIR)
+	@echo "  CPP   $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(STELLA_INCLUDE_DIRS) $(STELLA_DEFS) $(CPPFLAGS) $(STELLA_FORCE_INCLUDE) $(STELLA_CXXFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BMX_COMMON_BUILD_DIR)/a2600/%.o: $(SRC_DIR)/a2600/%.c | $(BMX_COMMON_BUILD_DIR)
+	@echo "  CC    $@"
+	@mkdir -p $(dir $@)
+	@$(CC) $(STELLA_INCLUDE_DIRS) $(CFLAGS) $(C_STANDARD) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
+
+$(BMX_COMMON_BUILD_DIR)/stella-upstream/%.o: $(STELLA_SRC_DIR)/%.cxx | $(BMX_COMMON_BUILD_DIR)
+	@echo "  STELLA $@"
+	@mkdir -p $(dir $@)
+	@$(CPP) $(STELLA_INCLUDE_DIRS) $(STELLA_DEFS) $(CPPFLAGS) $(STELLA_FORCE_INCLUDE) $(STELLA_CXXFLAGS) -MMD -MP -MF $(@:.o=.d) -MT $@ -c -o $@ $<
 endif
 
 # Hatari 68k CPU tables: generated by host tools (build68k, gencpu) exactly

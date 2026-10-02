@@ -1,0 +1,100 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#include "SimpleResampler.hxx"
+
+namespace {
+  constexpr float SAMPLE_SCALE = 1.F / FLT(0x7FFF);
+}  //namespace
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+SimpleResampler::SimpleResampler(
+  Resampler::Format formatFrom,
+  Resampler::Format formatTo,
+  const Resampler::NextFragmentCallback& nextFragmentCallback)
+  : Resampler(formatFrom, formatTo, nextFragmentCallback)
+{
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void SimpleResampler::fillFragment(float* fragment, uInt32 length)
+{
+  if (myIsUnderrun) {
+    Int16* nextFragment = myNextFragmentCallback();
+
+    if (nextFragment) {
+      myCurrentFragment = nextFragment;
+      myFragmentIndex = 0;
+      myIsUnderrun = false;
+    }
+  }
+
+  if (!myCurrentFragment) {
+    std::fill_n(fragment, length, 0.F);
+    return;
+  }
+
+  const bool stereoIn  = myFormatFrom.stereo;
+  const bool stereoOut = myFormatTo.stereo;
+  const size_t outputSamples = stereoOut ? (length >> 1U) : length;
+
+  // For the following math, remember that myTimeIndex = time * myFormatFrom.sampleRate * myFormatTo.sampleRate
+  for (auto i = 0UZ; i < outputSamples; ++i) {
+    if (stereoIn) {
+      const float sampleL = FLT(
+          myCurrentFragment[2*SZT(myFragmentIndex)]) * SAMPLE_SCALE;
+      const float sampleR = FLT(
+          myCurrentFragment[2*SZT(myFragmentIndex) + 1]) * SAMPLE_SCALE;
+
+      if (stereoOut) {
+        fragment[2*i] = sampleL;
+        fragment[2*i + 1] = sampleR;
+      }
+      else
+        fragment[i] = (sampleL + sampleR) / 2.F;
+    } else {
+      const auto sample = FLT(myCurrentFragment[myFragmentIndex]) * SAMPLE_SCALE;
+
+      if (stereoOut)
+        fragment[2*i] = fragment[2*i + 1] = sample;
+      else
+        fragment[i] = sample;
+    }
+
+    // time += 1 / myFormatTo.sampleRate
+    myTimeIndex += myFormatFrom.sampleRate;
+
+    // time >= 1 / myFormatFrom.sampleRate
+    if (myTimeIndex >= myFormatTo.sampleRate) {
+      // myFragmentIndex += time * myFormatFrom.sampleRate
+      myFragmentIndex += myTimeIndex / myFormatTo.sampleRate;
+      myTimeIndex %= myFormatTo.sampleRate;
+    }
+
+    if (myFragmentIndex >= myFormatFrom.fragmentSize) {
+      myFragmentIndex %= myFormatFrom.fragmentSize;
+
+      Int16* nextFragment = myNextFragmentCallback();
+      if (nextFragment)
+        myCurrentFragment = nextFragment;
+      else {
+        myUnderrunLogger.log();
+        myIsUnderrun = true;
+      }
+    }
+  }
+}

@@ -27,6 +27,12 @@ void video_set_color_adjustments(int brightness, int contrast, int gamma,
 void video_get_color_adjustments(int *brightness, int *contrast, int *gamma,
                                  int *tint, int *saturation);
 
+// CRT monitor emulation (Color/B&W/Green/Amber): luma-driven phosphor
+// mapping applied to every converted pixel. Color mode is the identity
+// (default look unchanged).
+void video_set_monitor(int mode);
+int video_get_monitor(void);
+
 // Present-path diagnostics for the heartbeat line (Phase 0: all zeros).
 void video_present_stats(unsigned long *presents, unsigned long *ensure_us,
                           unsigned long *present_us);

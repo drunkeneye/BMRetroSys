@@ -24,7 +24,7 @@ bool config_is_ntsc(void);
 // True once config_init() has completed.
 bool config_is_ready(void);
 
-// TOS pool (/roms/tos, legacy /tos): *.img discovery, EmuTOS first.
+// TOS pool (/roms/ATARIST): *.img discovery, EmuTOS first.
 // The menu stages an index; config_init boots it, config_apply_tos_reset
 // switches it live with a cold reset.
 int config_tos_count(void);

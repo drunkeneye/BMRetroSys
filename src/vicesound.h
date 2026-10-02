@@ -136,6 +136,7 @@ private:
   unsigned mQueueMinimumFillFrames;
   boolean mQueueDiagnosticsArmed;
   uint64_t mWriteWaitCount;
+  uint32_t mStallCalls;
   int mVolumePercent;
   CSpinLock mControlLock;
   ViceSoundDiagnostics mDiagnostics;

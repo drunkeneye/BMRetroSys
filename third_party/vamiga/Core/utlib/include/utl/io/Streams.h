@@ -44,6 +44,15 @@ struct hex {
     hex(u32 v) : hex(8, v) { };
     hex(u16 v) : hex(4, v) { };
     hex(u8 v) : hex(2, v) { };
+#if !defined(__LP64__) && !defined(_LP64)
+    // ILP32 (AArch32): long/unsigned long are 32-bit but distinct types
+    // from int/unsigned int, so fixed-width 32-bit values (e.g. uint32_t
+    // == unsigned long on ARM newlib) are ambiguous between the u32/u64
+    // overloads above. Exact overloads resolve it. Compiles out on LP64,
+    // so 64-bit behavior is unchanged.
+    hex(unsigned long v) : hex(8, v) { };
+    hex(long v) : hex(8, (u64)(i64)v) { };
+#endif
     std::ostream &operator()(std::ostream &os) const;
 };
 
@@ -57,6 +66,10 @@ struct bin {
     bin(u32 v) : bin(32, v) { };
     bin(u16 v) : bin(16, v) { };
     bin(u8 v) : bin(8, v) { };
+#if !defined(__LP64__) && !defined(_LP64)
+    bin(unsigned long v) : bin(32, v) { };
+    bin(long v) : bin(32, (u64)(i64)v) { };
+#endif
     std::ostream &operator()(std::ostream &os) const;
 };
 
@@ -103,6 +116,10 @@ struct str {
     str(u32 v) : str(4, v) { };
     str(u16 v) : str(2, v) { };
     str(u8 v) : str(1, v) { };
+#if !defined(__LP64__) && !defined(_LP64)
+    str(unsigned long v) : str(4, v) { };
+    str(long v) : str(4, (u64)(i64)v) { };
+#endif
     std::ostream &operator()(std::ostream &os) const;
 };
 

@@ -5,7 +5,8 @@ namespace update {
 
 bool IsKnownBoardFamily(BoardFamily board)
 {
-    return board == BoardFamily::Pi4Pi400 || board == BoardFamily::Pi5Pi500;
+    return board == BoardFamily::Pi4Pi400 || board == BoardFamily::Pi5Pi500 ||
+        board == BoardFamily::Pi3;
 }
 
 }  // namespace update

@@ -21,6 +21,14 @@ enum {
     ATARIMANIA_UTILS = 2
 };
 
+// Site sections (one machine family per search). The menu sets this
+// before each search/page turn; the worker reads it in FetchListPage.
+enum {
+    ATARIMANIA_MACHINE_8BIT = 0,
+    ATARIMANIA_MACHINE_ST = 1
+};
+void atarimania_set_machine(int machine);
+
 // Maximum productions kept per search (matches per=25 requests).
 #define ATARIMANIA_MAX_RESULTS 25
 

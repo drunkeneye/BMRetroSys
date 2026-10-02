@@ -41,14 +41,13 @@ extern "C" {
 uint32_t bmx_host_ticks_ms(void);
 }
 
-// Vendored mixer export (hardware/mixer.cpp, __circle__-gated). The TU uses
-// Bitu, which is Bit64u == `unsigned long long` (config.h); declaring the
-// same type here keeps mangling identical (`unsigned long` would mangle
-// differently despite also being 64-bit LP64). (circle_sound_* come from
-// circle.h above; do NOT redeclare them here — linkage mismatch.)
-extern unsigned long long MIXER_BMX_Pull(int16_t *stereo_out,
-                                         unsigned long long frames);
-extern unsigned long long MIXER_BMX_Rate(void);
+// Vendored mixer export (hardware/mixer.cpp, __circle__-gated). The TU now
+// uses uint64_t (was Bitu == Bit64u == `unsigned long long`); declaring
+// the same type here keeps mangling identical (`unsigned long long` would
+// mangle differently despite also being 64-bit LP64). (circle_sound_* come
+// from circle.h above; do NOT redeclare them here — linkage mismatch.)
+extern uint64_t MIXER_BMX_Pull(int16_t *stereo_out, uint64_t frames);
+extern uint64_t MIXER_BMX_Rate(void);
 
 namespace bmx {
 namespace dos {
@@ -89,7 +88,7 @@ void sound_play(void) {
     // Unconditional: proves the pump reaches the drain (the 09:44 kernel
     // never got here — sound_play sat behind the parked frame loop).
     debug_log("sound_play: first call, mixer rate=%lluHz (expect %d)",
-              MIXER_BMX_Rate(), kDosboxxSoundRate);
+              (unsigned long long)MIXER_BMX_Rate(), kDosboxxSoundRate);
   }
   if (DOS_RUNTIME_TRACE && (s_calls % 600) == 0) {
     // Heartbeat regardless of pulls: calls advance even when gated.

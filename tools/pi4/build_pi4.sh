@@ -170,14 +170,16 @@ if [ "$PI4_AARCH64" -eq 1 ]; then
   cat <<'EOF'
 Building Pi4/Pi400 AArch64 native-KMS VICE 3.10 kernels with pinned Mbed TLS support.
 
-Currently wired VICE 3.10 machines: C64 (x64/x64sc), SCPU64, C128, VIC20, Plus/4, PET.
+Currently wired VICE 3.10 machines: C64 (x64/x64sc), SCPU64, C128, VIC20, Plus/4, PET;
+plus Atari800, DOS, Atari ST, Amiga, ZX Spectrum, CPC, MSX, Atari 2600.
 EOF
 else
   STAGE_ARGS+=("--aarch32")
   cat <<'EOF'
 Building Pi4/Pi400 AArch32 legacy-capable VICE 3.10 kernels with pinned Mbed TLS support.
 
-Currently wired VICE 3.10 machines: C64 (x64/x64sc), SCPU64, C128, VIC20, Plus/4, PET.
+Currently wired VICE 3.10 machines: C64 (x64/x64sc), SCPU64, C128, VIC20, Plus/4, PET;
+plus Atari800, DOS, Atari ST, Amiga, ZX Spectrum, CPC, MSX, Atari 2600.
 EOF
 fi
 
@@ -208,7 +210,11 @@ fi
 touch "$SRC_DIR/third_party/common/menu.c" \
       "$SRC_DIR/src/atari800/atari800_debug.cpp" \
       "$SRC_DIR/src/atarist/atarist_debug.cpp" \
-      "$SRC_DIR/src/amiga/amiga_debug.cpp"
+      "$SRC_DIR/src/amiga/amiga_debug.cpp" \
+      "$SRC_DIR/src/zxspectrum/zx_debug.cpp" \
+      "$SRC_DIR/src/cpc/cpc_debug.cpp" \
+      "$SRC_DIR/src/msx/msx_debug.cpp" \
+      "$SRC_DIR/src/a2600/a2600_debug.cpp"
 # DOSBox-X kernel tag (BUILD TAG in bmretrosys-dos.log) lives in the generated
 # src/dos/dos_build_tag.h, included by dos_debug.cpp and
 # dos_boot.cpp. Regenerate it on EVERY build so the log tag always

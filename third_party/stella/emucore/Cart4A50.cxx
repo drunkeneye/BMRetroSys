@@ -1,0 +1,433 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#include "System.hxx"
+#include "M6532.hxx"
+#include "TIA.hxx"
+#include "Cart4A50.hxx"
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Cartridge4A50::Cartridge4A50(ByteSpan image, string_view md5,
+                             const Settings& settings)
+  : Cartridge(settings, md5),
+    mySize{image.size()}
+{
+  // Copy the ROM image into my buffer
+  // Supported file sizes are 32/64/128K, which are duplicated if necessary
+  size_t size = image.size();
+  if(size < 64_KB)        size = 32_KB;
+  else if(size < 128_KB)  size = 64_KB;
+  else                    size = 128_KB;
+  for(uInt32 slice = 0; slice < 128_KB / size; ++slice)
+    // size is rounded up to 32/64/128K, so clamp the source read to the
+    // actual image size to avoid reading past a smaller-than-expected image
+    std::copy_n(image.data(), std::min(size, image.size()), myImage.data() + (slice*size));
+
+  // We use System::PageAccess.romAccessBase, but don't allow its use
+  // through a pointer, since the address space of 4A50 carts can change
+  // at the instruction level, and PageAccess is normally defined at an
+  // interval of 64 bytes
+  //
+  // Instead, access will be through the getAccessFlags and setAccessFlags
+  // methods below
+  createRomAccessArrays(128_KB + myRAM.size());
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Cartridge4A50::reset()
+{
+  Cartridge::reset();
+
+  initializeRAM(myRAM);
+
+  mySliceLow = mySliceMiddle = mySliceHigh = 0;
+  myIsRomLow = myIsRomMiddle = myIsRomHigh = true;
+
+  myLastData    = 0xff;
+  myLastAddress = 0xffff;
+
+  myBankChanged = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Cartridge4A50::install(System& system)
+{
+  mySystem = &system;
+
+  // Map all of the accesses to call peek and poke (We don't yet indicate RAM areas)
+  const System::PageAccess access(this, System::PageAccessType::READ);
+  for(uInt16 addr = 0x1000; addr < 0x2000; addr += System::PAGE_SIZE)
+    mySystem->setPageAccess(addr, access);
+
+  // Mirror all access in TIA and RIOT; by doing so we're taking responsibility
+  // for that address space in peek and poke below.
+  mySystem->tia().installDelegate(system, *this);
+  mySystem->m6532().installDelegate(system, *this);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 Cartridge4A50::peek(uInt16 address)
+{
+  uInt8 value = 0;
+
+  if(!(address & 0x1000U))                      // Hotspots below 0x1000
+  {
+    // Check for RAM or TIA mirroring
+    const uInt16 lowAddress = address & 0x3ffU;
+    if(lowAddress & 0x80U)
+      value = mySystem->m6532().peek(address);
+    else if(!(lowAddress & 0x200U))
+      value = mySystem->tia().peek(address);
+
+    checkBankSwitch(address, value);
+  }
+  else
+  {
+    if((address & 0x1800U) == 0x1000)           // 2K region from 0x1000 - 0x17ff
+    {
+      value = myIsRomLow ? myImage[(address & 0x7ffU) + mySliceLow]
+                         : myRAM[(address & 0x7ffU) + mySliceLow];
+    }
+    else if(((address & 0x1fffU) >= 0x1800) &&  // 1.5K region from 0x1800 - 0x1dff
+            ((address & 0x1fffU) <= 0x1dff))
+    {
+      value = myIsRomMiddle ? myImage[(address & 0x7ffU) + mySliceMiddle + 0x10000]
+                            : myRAM[(address & 0x7ffU) + mySliceMiddle];
+    }
+    else if((address & 0x1f00U) == 0x1e00)      // 256B region from 0x1e00 - 0x1eff
+    {
+      value = myIsRomHigh ? myImage[(address & 0xffU) + mySliceHigh + 0x10000]
+                          : myRAM[(address & 0xffU) + mySliceHigh];
+    }
+    else if((address & 0x1f00U) == 0x1f00)      // 256B region from 0x1f00 - 0x1fff
+    {
+      value = myImage[(address & 0xffU) + 0x1ff00];
+      if(!hotspotsLocked() && ((myLastData & 0xe0U) == 0x60) &&
+         ((myLastAddress >= 0x1000) || (myLastAddress < 0x200)))
+        mySliceHigh = (mySliceHigh & 0xf0ffU) | ((address & 0x8U) << 8U) |
+                      ((address & 0x70U) << 4U);
+    }
+  }
+  myLastData = value;
+  myLastAddress = address & 0x1fffU;
+
+  return value;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Cartridge4A50::poke(uInt16 address, uInt8 value)
+{
+  if(!(address & 0x1000U))                      // Hotspots below 0x1000
+  {
+    // Check for RAM or TIA mirroring
+    const uInt16 lowAddress = address & 0x3ffU;
+    if(lowAddress & 0x80U)
+      mySystem->m6532().poke(address, value);
+    else if(!(lowAddress & 0x200U))
+      mySystem->tia().poke(address, value);
+
+    checkBankSwitch(address, value);
+  }
+  else
+  {
+    if((address & 0x1800U) == 0x1000)           // 2K region at 0x1000 - 0x17ff
+    {
+      if(!myIsRomLow)
+      {
+        myRAM[(address & 0x7ffU) + mySliceLow] = value;
+        myBankChanged = true;
+      }
+    }
+    else if(((address & 0x1fffU) >= 0x1800) &&  // 1.5K region at 0x1800 - 0x1dff
+            ((address & 0x1fffU) <= 0x1dff))
+    {
+      if(!myIsRomMiddle)
+      {
+        myRAM[(address & 0x7ffU) + mySliceMiddle] = value;
+        myBankChanged = true;
+      }
+    }
+    else if((address & 0x1f00U) == 0x1e00)      // 256B region at 0x1e00 - 0x1eff
+    {
+      if(!myIsRomHigh)
+      {
+        myRAM[(address & 0xffU) + mySliceHigh] = value;
+        myBankChanged = true;
+      }
+    }
+    else if((address & 0x1f00U) == 0x1f00 &&    // 256B region at 0x1f00 - 0x1fff
+            !hotspotsLocked() && ((myLastData & 0xe0U) == 0x60) &&
+            ((myLastAddress >= 0x1000) || (myLastAddress < 0x200)))
+    {
+      mySliceHigh = (mySliceHigh & 0xf0ffU) | ((address & 0x8U) << 8U) |
+                    ((address & 0x70U) << 4U);
+      myBankChanged = true;
+    }
+  }
+  myLastData = value;
+  myLastAddress = address & 0x1fffU;
+
+  return myBankChanged;
+}
+
+#ifdef DEBUGGER_SUPPORT
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Device::AccessType Cartridge4A50::getAccessFlags(uInt16 address) const
+{
+  if((address & 0x1800U) == 0x1000)           // 2K region from 0x1000 - 0x17ff
+  {
+    if(myIsRomLow)
+      return myRomAccessBase[(address & 0x7ffU) + mySliceLow];
+    else
+      return myRomAccessBase[131072 + (address & 0x7ffU) + mySliceLow];
+  }
+  else if(((address & 0x1fffU) >= 0x1800) &&  // 1.5K region from 0x1800 - 0x1dff
+          ((address & 0x1fffU) <= 0x1dff))
+  {
+    if(myIsRomMiddle)
+      return myRomAccessBase[(address & 0x7ffU) + mySliceMiddle + 0x10000];
+    else
+      return myRomAccessBase[131072 + (address & 0x7ffU) + mySliceMiddle];
+  }
+  else if((address & 0x1f00U) == 0x1e00)      // 256B region from 0x1e00 - 0x1eff
+  {
+    if(myIsRomHigh)
+      return myRomAccessBase[(address & 0xffU) + mySliceHigh + 0x10000];
+    else
+      return myRomAccessBase[131072 + (address & 0xffU) + mySliceHigh];
+  }
+  else if((address & 0x1f00U) == 0x1f00)      // 256B region from 0x1f00 - 0x1fff
+  {
+    return myRomAccessBase[(address & 0xffU) + 0x1ff00];
+  }
+  return Device::NONE;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Cartridge4A50::setAccessFlags(uInt16 address, Device::AccessType flags)
+{
+  if((address & 0x1800U) == 0x1000)           // 2K region from 0x1000 - 0x17ff
+  {
+    if(myIsRomLow)
+      myRomAccessBase[(address & 0x7ffU) + mySliceLow] |= flags;
+    else
+      myRomAccessBase[131072 + (address & 0x7ffU) + mySliceLow] |= flags;
+  }
+  else if(((address & 0x1fffU) >= 0x1800) &&  // 1.5K region from 0x1800 - 0x1dff
+          ((address & 0x1fffU) <= 0x1dff))
+  {
+    if(myIsRomMiddle)
+      myRomAccessBase[(address & 0x7ffU) + mySliceMiddle + 0x10000] |= flags;
+    else
+      myRomAccessBase[131072 + (address & 0x7ffU) + mySliceMiddle] |= flags;
+  }
+  else if((address & 0x1f00U) == 0x1e00)      // 256B region from 0x1e00 - 0x1eff
+  {
+    if(myIsRomHigh)
+      myRomAccessBase[(address & 0xffU) + mySliceHigh + 0x10000] |= flags;
+    else
+      myRomAccessBase[131072 + (address & 0xffU) + mySliceHigh] |= flags;
+  }
+  else if((address & 0x1f00U) == 0x1f00)      // 256B region from 0x1f00 - 0x1fff
+  {
+    myRomAccessBase[(address & 0xffU) + 0x1ff00] |= flags;
+  }
+}
+#endif
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Cartridge4A50::checkBankSwitch(uInt16 address, uInt8 value)
+{
+  if(hotspotsLocked()) return;
+
+  // This scheme contains so many hotspots that it's easier to just check
+  // all of them
+  if(((myLastData & 0xe0U) == 0x60) &&      // Switch lower/middle/upper bank
+     ((myLastAddress >= 0x1000) || (myLastAddress < 0x200)))
+  {
+    if((address & 0x0f00U) == 0x0c00)       // Enable 256B of ROM at 0x1e00 - 0x1eff
+      bankROMHigh(address & 0xffU);
+    else if((address & 0x0f00U) == 0x0d00)  // Enable 256B of RAM at 0x1e00 - 0x1eff
+      bankRAMHigh(address & 0x7fU);
+    else if((address & 0x0f40U) == 0x0e00)  // Enable 2K of ROM at 0x1000 - 0x17ff
+      bankROMLower(address & 0x1fU);
+    else if((address & 0x0f40U) == 0x0e40)  // Enable 2K of RAM at 0x1000 - 0x17ff
+      bankRAMLower(address & 0xfU);
+    else if((address & 0x0f40U) == 0x0f00)  // Enable 1.5K of ROM at 0x1800 - 0x1dff
+      bankROMMiddle(address & 0x1fU);
+    else if((address & 0x0f50U) == 0x0f40)  // Enable 1.5K of RAM at 0x1800 - 0x1dff
+      bankRAMMiddle(address & 0xfU);
+
+    // Stella helper functions
+    else if((address & 0x0f00U) == 0x0400)   // Toggle bit A11 of lower block address
+    {
+      mySliceLow = mySliceLow ^ 0x800U;
+      myBankChanged = true;
+    }
+    else if((address & 0x0f00U) == 0x0500)   // Toggle bit A12 of lower block address
+    {
+      mySliceLow = mySliceLow ^ 0x1000U;
+      myBankChanged = true;
+    }
+    else if((address & 0x0f00U) == 0x0800)   // Toggle bit A11 of middle block address
+    {
+      mySliceMiddle = mySliceMiddle ^ 0x800U;
+      myBankChanged = true;
+    }
+    else if((address & 0x0f00U) == 0x0900)   // Toggle bit A12 of middle block address
+    {
+      mySliceMiddle = mySliceMiddle ^ 0x1000U;
+      myBankChanged = true;
+    }
+  }
+
+  // Zero-page hotspots for upper page
+  //   0xf4, 0xf6, 0xfc, 0xfe for ROM
+  //   0xf5, 0xf7, 0xfd, 0xff for RAM
+  //   0x74 - 0x7f (0x80 bytes lower)
+  if((address & 0xf75U) == 0x74)         // Enable 256B of ROM at 0x1e00 - 0x1eff
+    bankROMHigh(value);
+  else if((address & 0xf75U) == 0x75)    // Enable 256B of RAM at 0x1e00 - 0x1eff
+    bankRAMHigh(value & 0x7fU);
+
+  // Zero-page hotspots for lower and middle blocks
+  //   0xf8, 0xf9, 0xfa, 0xfb
+  //   0x78, 0x79, 0x7a, 0x7b (0x80 bytes lower)
+  else if((address & 0xf7cU) == 0x78)
+  {
+    if((value & 0xf0U) == 0)           // Enable 2K of ROM at 0x1000 - 0x17ff
+      bankROMLower(value & 0xfU);
+    else if((value & 0xf0U) == 0x40)   // Enable 2K of RAM at 0x1000 - 0x17ff
+      bankRAMLower(value & 0xfU);
+    else if((value & 0xf0U) == 0x90)   // Enable 1.5K of ROM at 0x1800 - 0x1dff
+      bankROMMiddle((value & 0xfU) | 0x10U);
+    else if((value & 0xf0U) == 0xc0)   // Enable 1.5K of RAM at 0x1800 - 0x1dff
+      bankRAMMiddle(value & 0xfU);
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Cartridge4A50::patch(uInt16 address, uInt8 value)
+{
+  if((address & 0x1800U) == 0x1000)           // 2K region from 0x1000 - 0x17ff
+  {
+    if(myIsRomLow)
+      myImage[(address & 0x7ffU) + mySliceLow] = value;
+    else
+      myRAM[(address & 0x7ffU) + mySliceLow] = value;
+  }
+  else if(((address & 0x1fffU) >= 0x1800) &&  // 1.5K region from 0x1800 - 0x1dff
+          ((address & 0x1fffU) <= 0x1dff))
+  {
+    if(myIsRomMiddle)
+      myImage[(address & 0x7ffU) + mySliceMiddle + 0x10000] = value;
+    else
+      myRAM[(address & 0x7ffU) + mySliceMiddle] = value;
+  }
+  else if((address & 0x1f00U) == 0x1e00)      // 256B region from 0x1e00 - 0x1eff
+  {
+    if(myIsRomHigh)
+      myImage[(address & 0xffU) + mySliceHigh + 0x10000] = value;
+    else
+      myRAM[(address & 0xffU) + mySliceHigh] = value;
+  }
+  else if((address & 0x1f00U) == 0x1f00)      // 256B region from 0x1f00 - 0x1fff
+  {
+    myImage[(address & 0xffU) + 0x1ff00] = value;
+  }
+  return myBankChanged = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ByteSpan Cartridge4A50::getImage() const
+{
+  return ByteSpan{myImage}.first(mySize);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Cartridge4A50::save(Serializer& out) const
+{
+  try
+  {
+    // The 32K bytes of RAM
+    out.putByteArray(myRAM);
+
+    // Index pointers
+    out.putShort(mySliceLow);
+    out.putShort(mySliceMiddle);
+    out.putShort(mySliceHigh);
+
+    // Whether index pointers are for ROM or RAM
+    out.putBool(myIsRomLow);
+    out.putBool(myIsRomMiddle);
+    out.putBool(myIsRomHigh);
+
+    // Last address and data values
+    out.putByte(myLastData);
+    out.putShort(myLastAddress);
+  }
+  catch(...)
+  {
+    cerr << "ERROR: Cartridge4A40::save\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Cartridge4A50::load(Serializer& in)
+{
+  try
+  {
+    in.getByteArray(myRAM);
+
+    // Index pointers
+    mySliceLow = in.getShort();
+    mySliceMiddle = in.getShort();
+    mySliceHigh = in.getShort();
+
+    // Whether index pointers are for ROM or RAM
+    myIsRomLow = in.getBool();
+    myIsRomMiddle = in.getBool();
+    myIsRomHigh = in.getBool();
+
+    // Reject a corrupt save state whose slice offsets, combined with the
+    // ROM/RAM flags, would index myImage/myRAM out of bounds in peek()/poke().
+    // Each expression is the worst-case index (max address mask) of the
+    // matching access there
+    const auto inBounds = [](size_t index, size_t size) { return index < size; };
+    if(!((myIsRomLow    ? inBounds(0x7ffU + mySliceLow,               myImage.size())
+                        : inBounds(0x7ffU + mySliceLow,               myRAM.size())) &&
+         (myIsRomMiddle ? inBounds(0x7ffU + mySliceMiddle + 0x10000U, myImage.size())
+                        : inBounds(0x7ffU + mySliceMiddle,            myRAM.size())) &&
+         (myIsRomHigh   ? inBounds(0x0ffU + mySliceHigh + 0x10000U,   myImage.size())
+                        : inBounds(0x0ffU + mySliceHigh,              myRAM.size()))))
+      return false;
+
+    // Last address and data values
+    myLastData = in.getByte();
+    myLastAddress = in.getShort();
+  }
+  catch(...)
+  {
+    cerr << "ERROR: Cartridge4A50::load\n";
+    return false;
+  }
+
+  return true;
+}

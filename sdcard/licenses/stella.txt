@@ -1,0 +1,6 @@
+Stella - A multi-platform Atari 2600 VCS emulator
+Copyright (C) 1995-2026 Bradford W. Mott, Stephen Anthony and the
+Stella Team (https://stella-emu.github.io)
+
+Licensed under the GNU General Public License v2 (see the full text in
+third_party/stella/License.txt of the BMRetroSys source tree).

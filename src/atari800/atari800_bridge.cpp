@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/types.h>
 
 // The atari800 core headers are C headers; pull them in with C linkage.
@@ -729,11 +730,18 @@ void emux_atari_sync_drives(void) { bmx::atari800::sync_drive_items(); }
 
 static void ensure_ext(char *dst, size_t size, const char *path,
                        const char *ext) {
+  if (dst == NULL || size == 0) {
+    return;
+  }
   snprintf(dst, size, "%s", path);
+  size_t len = strlen(dst);
+  if (len + 1 >= size) {
+    return;
+  }
   const char *slash = strrchr(dst, '/');
   const char *base = slash != NULL ? slash + 1 : dst;
   if (strchr(base, '.') == NULL) {
-    strncat(dst, ext, size - strlen(dst) - 1);
+    strncat(dst, ext, size - len - 1);
   }
 }
 
@@ -810,23 +818,37 @@ int emux_atari_blank_atr(char *path) {
   return ok ? 0 : -1;
 }
 
-static void swap_ext_case(char *base, const char *newext) {
+static void swap_ext_case(char *base, size_t size, const char *newext) {
   // Replace base's extension with newext, preserving each char's case.
+  if (base == NULL || size == 0 || newext == NULL) {
+    return;
+  }
   char *dot = strrchr(base, '.');
   if (dot == NULL) {
-    strcat(base, ".");
-    strcat(base, newext);
+    size_t len = strlen(base);
+    if (len + 1 < size) {
+      strncat(base, ".", size - len - 1);
+      len++;
+    }
+    if (len < size) {
+      strncat(base, newext, size - len - 1);
+    }
     return;
   }
   size_t i = 0;
   dot++;
-  while (newext[i] != '\0' && i < 8) {
+  size_t room = (size_t)(dot - base) < size ? size - (size_t)(dot - base) : 0;
+  while (newext[i] != '\0' && i + 1 < room && i < 8) {
     dot[i] = (dot[i] >= 'A' && dot[i] <= 'Z' && newext[i] >= 'a')
                  ? (char)(newext[i] - ('a' - 'A'))
                  : newext[i];
     i++;
   }
-  dot[i] = '\0';
+  if (i < room) {
+    dot[i] = '\0';
+  } else if (room > 0) {
+    dot[room - 1] = '\0';
+  }
 }
 
 int emux_atari_uncompress(char *path, char *out_path, size_t out_size) {
@@ -853,13 +875,13 @@ int emux_atari_uncompress(char *path, char *out_path, size_t out_size) {
       *((char *)dot) = '\0';
     } else if (dot != NULL &&
                (strcmp(dot + 1, "atz") == 0 || strcmp(dot + 1, "ATZ") == 0)) {
-      swap_ext_case(newbase, "atr");
+      swap_ext_case(newbase, sizeof(newbase), "atr");
     } else if (dot != NULL &&
                (strcmp(dot + 1, "xfz") == 0 || strcmp(dot + 1, "XFZ") == 0)) {
-      swap_ext_case(newbase, "xfd");
+      swap_ext_case(newbase, sizeof(newbase), "xfd");
     }
   } else if (is_dcm) {
-    swap_ext_case(newbase, "atr");
+    swap_ext_case(newbase, sizeof(newbase), "atr");
   } else {
     fclose(fp);
     return -1;
@@ -1293,7 +1315,7 @@ void emux_add_keyboard_options(struct menu_item *parent) {
         ui_menu_add_multiple_choice(MENU_ATARI_F6 + i, parent, label);
     child->num_choices = 7;
     for (int a = 0; a < 7; a++) {
-      strcpy(child->choices[a], actions[a]);
+      snprintf(child->choices[a], sizeof child->choices[a], "%s", actions[a]);
       child->choice_ints[a] = a;
     }
     child->value = bmx::atari800::g_fkey_action[i];
@@ -1369,8 +1391,28 @@ void emux_add_machine_options(struct menu_item *parent) {
       ui_menu_add_multiple_choice(MENU_ATARI_MACHINE, parent, "Machine");
   child->num_choices = bmx::atari800::kNumSubmodels;
   for (int i = 0; i < bmx::atari800::kNumSubmodels; i++) {
-    strcpy(child->choices[i], bmx::atari800::kSubmodels[i].name);
+    snprintf(child->choices[i], sizeof child->choices[i], "%s",
+             bmx::atari800::kSubmodels[i].name);
     child->choice_ints[i] = i;
+  }
+  // Always alphabetical so every kernel lists machines in the same order.
+  for (int i = 1; i < child->num_choices; i++) {
+    char tmp_name[MAX_MENU_STR];
+    snprintf(tmp_name, sizeof tmp_name, "%s", child->choices[i]);
+    int tmp_int = child->choice_ints[i];
+    int tmp_dis = child->choice_disabled[i];
+    int j = i - 1;
+    while (j >= 0 && strcasecmp(child->choices[j], tmp_name) > 0) {
+      snprintf(child->choices[j + 1], sizeof child->choices[j + 1], "%s",
+               child->choices[j]);
+      child->choice_ints[j + 1] = child->choice_ints[j];
+      child->choice_disabled[j + 1] = child->choice_disabled[j];
+      j--;
+    }
+    snprintf(child->choices[j + 1], sizeof child->choices[j + 1], "%s",
+             tmp_name);
+    child->choice_ints[j + 1] = tmp_int;
+    child->choice_disabled[j + 1] = tmp_dis;
   }
   bmx::atari800::sync_machine_item();
 
@@ -1466,11 +1508,14 @@ void emux_add_machine_options(struct menu_item *parent) {
     const bmx::atari800::RomChoice *choices =
         bmx::atari800::os_choices_for_machine(&count);
     child->num_choices = 0;
-    strcpy(child->choices[child->num_choices], "Auto");
+    snprintf(child->choices[child->num_choices],
+             sizeof child->choices[child->num_choices], "Auto");
     child->choice_ints[child->num_choices] = SYSROM_AUTO;
     child->num_choices++;
-    for (int i = 0; i < count; i++) {
-      strcpy(child->choices[child->num_choices], choices[i].name);
+    for (int i = 0; i < count && child->num_choices < MAX_CHOICES; i++) {
+      snprintf(child->choices[child->num_choices],
+               sizeof child->choices[child->num_choices], "%s",
+               choices[i].name);
       child->choice_ints[child->num_choices] = choices[i].id;
       child->num_choices++;
     }
@@ -1480,14 +1525,17 @@ void emux_add_machine_options(struct menu_item *parent) {
       ui_menu_add_multiple_choice(MENU_ATARI_BASIC_VER, roms, "BASIC version");
   {
     child->num_choices = 0;
-    strcpy(child->choices[child->num_choices], "Auto");
+    snprintf(child->choices[child->num_choices],
+             sizeof child->choices[child->num_choices], "Auto");
     child->choice_ints[child->num_choices] = SYSROM_AUTO;
     child->num_choices++;
     for (size_t i = 0;
-         i < sizeof(bmx::atari800::kBasic) / sizeof(bmx::atari800::kBasic[0]);
+         i < sizeof(bmx::atari800::kBasic) / sizeof(bmx::atari800::kBasic[0]) &&
+         child->num_choices < MAX_CHOICES;
          i++) {
-      strcpy(child->choices[child->num_choices],
-             bmx::atari800::kBasic[i].name);
+      snprintf(child->choices[child->num_choices],
+               sizeof child->choices[child->num_choices], "%s",
+               bmx::atari800::kBasic[i].name);
       child->choice_ints[child->num_choices] = bmx::atari800::kBasic[i].id;
       child->num_choices++;
     }
@@ -1521,7 +1569,7 @@ int emux_atari_blank_cart(char *path) {
   {
     const char *slash = strrchr(fixed, '/');
     const char *base = slash != NULL ? slash + 1 : fixed;
-    if (strchr(base, '.') == NULL) {
+    if (strchr(base, '.') == NULL && strlen(fixed) + 1 < sizeof(fixed)) {
       strncat(fixed, ".car", sizeof(fixed) - strlen(fixed) - 1);
     }
   }
@@ -2199,32 +2247,25 @@ int emux_handle_menu_change(struct menu_item *item) {
     Screen_show_atari_speed = item->value ? 1 : 0;
     return 1;
   case MENU_ATARI_SCREENSHOT: {
-    // Auto-named BMP dump of the emulator frame (same volume preference
-    // as snapshot saves: USB stick first, then SD system volume).
-    static const char *kShotDirs[] = {
-        "USER:/systems/ATARI800/snapshots",
-        "SYS:/systems/ATARI800/snapshots",
-        "SD:/systems/ATARI800/snapshots",
-    };
+    // Auto-named BMP dump of the emulator frame on SD:/screenshots
+    // (never beside snapshots); the folder is created on demand.
+    bmx_screenshot_mkdir("atari800");
     char path[64];
     bool saved = false;
-    for (size_t d = 0;
-         d < sizeof(kShotDirs) / sizeof(kShotDirs[0]) && !saved; d++) {
-      for (int n = 0; n < 100 && !saved; n++) {
-        snprintf(path, sizeof(path), "%s/shot%02d.bmp", kShotDirs[d], n);
-        FILE *probe = fopen(path, "rb");
-        if (probe != NULL) {
-          fclose(probe);
-          continue;  // name taken
-        }
-        if (bmx::atari800::video_save_screenshot(path)) {
-          saved = true;
-          char msg[64];
-          snprintf(msg, sizeof(msg), "Saved shot%02d.bmp", n);
-          ui_info(msg);
-        } else if (n == 0) {
-          break;  // dir itself unwritable, try next volume
-        }
+    for (int n = 0; n < 100 && !saved; n++) {
+      bmx_screenshot_path(path, sizeof(path), "atari800", n);
+      FILE *probe = fopen(path, "rb");
+      if (probe != NULL) {
+        fclose(probe);
+        continue;  // name taken
+      }
+      if (bmx::atari800::video_save_screenshot(path)) {
+        saved = true;
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Saved shot%02d.bmp", n);
+        ui_info(msg);
+      } else if (n == 0) {
+        break;  // dir itself unwritable
       }
     }
     if (!saved) {

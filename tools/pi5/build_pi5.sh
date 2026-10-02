@@ -154,7 +154,8 @@ export BMX_BUILD_CLEAN="$CLEAN_BUILD"
 cat <<'EOF'
 Building Pi5/Pi500 VICE 3.10 kernels with pinned Mbed TLS support.
 
-Currently wired VICE 3.10 machines: C64 (x64/x64sc), SCPU64, C128, VIC20, Plus/4, PET.
+Currently wired VICE 3.10 machines: C64 (x64/x64sc), SCPU64, C128, VIC20, Plus/4, PET;
+plus Atari800, DOS, Atari ST, Amiga, ZX Spectrum, CPC, MSX, Atari 2600.
 EOF
 
 . "$SRC_DIR/tools/pi5/vice310_build_common.sh"

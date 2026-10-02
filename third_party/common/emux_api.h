@@ -49,6 +49,10 @@ typedef enum {
   BMC64_MACHINE_CLASS_DOS,
   BMC64_MACHINE_CLASS_ATARIST,
   BMC64_MACHINE_CLASS_AMIGA,
+  BMC64_MACHINE_CLASS_ZXSPECTRUM,
+  BMC64_MACHINE_CLASS_CPC,
+  BMC64_MACHINE_CLASS_MSX,
+  BMC64_MACHINE_CLASS_A2600,
 } BMC64MachineClass;
 
 typedef enum {
@@ -560,6 +564,11 @@ void emux_get_default_color_setting(int *brightness, int *contrast, int *gamma, 
 int is_ntsc();
 int is_composite();
 int allow_shader();
+
+// Machine override: nonzero forces the V3D scaler path on (used by MSX,
+// whose HVS direct geometry shows stale-frame ghosts). Weak default 0;
+// a machine backend may provide a strong definition.
+int bmx_machine_forces_v3d(void);
 
 void emux_add_userport_joys(struct menu_item* parent);
 

@@ -2,7 +2,7 @@ format = "bmx-sd-layout-v1"
 default = "deny"
 
 # Entry syntax: `from` is alias/relative-source, `to` is the final SD path.
-# Scopes are `both`, `pi4` and `pi5`; `file`, `tree` and `directory` are the
+# Scopes are `both`, `pi3`, `pi4` and `pi5`; `file`, `tree` and `directory` are the
 # only entry kinds. Modes are: replace=BMX system file, kernel=stable machine
 # kernel, config=local configuration template, metadata=release metadata,
 # keep=preserve existing user/local content. A missing `from` declares only a
@@ -17,6 +17,7 @@ vice = "{repo}/third_party/vice-3.10"
 vice_data = "{repo}/third_party/vice-3.10/data"
 raspi_keymaps = "{repo}/tools/keymaps/raspi"
 wlan = "{repo}/third_party/raspberrypi-firmware/wlan"
+pi3_boot = "{repo}/third_party/raspberrypi-firmware/boot/pi3"
 pi4_boot = "{repo}/third_party/raspberrypi-firmware/boot/pi4"
 pi5_boot = "{repo}/third_party/raspberrypi-firmware/boot/pi5"
 firmware_boot = "{repo}/third_party/raspberrypi-firmware/boot"
@@ -570,15 +571,15 @@ mode = "keep"
 
 # EmuTOS default TOS for the ATARIST machine (GPL, vendored in
 # third_party/hatari/emutos/). Genuine TOS is staged manually by the user
-# into /roms/tos/ on the SD card; never in git.
+# into /roms/ATARIST/ on the SD card; never in git.
 [[both.file]]
 from = "repo/third_party/hatari/emutos/etos512uk.img"
-to = "roms/tos/etos512uk.img"
+to = "roms/ATARIST/etos512uk.img"
 mode = "replace"
 
 [[both.file]]
 from = "sdcard/atarist/ROMS.txt"
-to = "roms/tos/ROMS.txt"
+to = "roms/ATARIST/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
@@ -588,12 +589,42 @@ mode = "keep"
 
 [[both.file]]
 from = "sdcard/amiga/ROMS.txt"
-to = "roms/kick/ROMS.txt"
+to = "roms/AMIGA/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
 from = "sdcard/amiga/bootstat.txt"
 to = "roms/AMIGA/bootstat.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/zxspectrum/ROMS.txt"
+to = "roms/ZXSPECTRUM/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/zxspectrum/bootstat.txt"
+to = "roms/ZXSPECTRUM/bootstat.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/cpc/ROMS.txt"
+to = "roms/CPC/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/cpc/bootstat.txt"
+to = "roms/CPC/bootstat.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/msx/ROMS.txt"
+to = "roms/MSX/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/msx/bootstat.txt"
+to = "roms/MSX/bootstat.txt"
 mode = "keep"
 
 # Atari ROM pool. Everything in bmx/roms/a800/ is staged 1:1 to
@@ -611,30 +642,41 @@ mode = "keep"
 exclude = ["README.txt"]
 
 # Kickstart pool for the AMIGA machine. Everything in repo roms/amiga/ is
-# staged 1:1 to /roms/kick/ on the SD card (flat, original names kept). The
-# kernel scans /roms/kick (falling back to legacy /kick) for
+# staged 1:1 to /roms/AMIGA/ on the SD card (flat, original names kept).
+# The kernel scans /roms/AMIGA (falling back to legacy /roms/kick, then
+# /kick) for
 # kick34005.A500 / kick37175.A500 / kick40063.A600 / kick40068.A1200 /
 # aros-amiga-m68k-rom.bin and boots zero-config from the compiled-in
 # DiagROM when nothing matches.
 [[both.tree]]
 from = "repo/roms/amiga"
-to = "roms/kick"
+to = "roms/AMIGA"
 mode = "keep"
 exclude = ["README.txt"]
 
+# Spectrum ROM pool for the ZXSPECTRUM machine. The files ship in the
+# vendored ZEsarUX tree (treated as redistributable per project policy),
+# staged 1:1 to /roms/ZXSPECTRUM/ on the SD card. Like the Atari/Amiga/TOS
+# pools this is keep: fresh cards are seeded, user-supplied genuine ROMs
+# with the same names are never overwritten.
+[[both.tree]]
+from = "repo/third_party/zesarux/roms"
+to = "roms/ZXSPECTRUM"
+mode = "keep"
+exclude = ["README.txt"]
 # Genuine TOS pool for the ATARIST machine. Everything in repo roms/tos/ is
-# staged 1:1 to /roms/tos/ on the SD card (canonical names tos106uk.img /
-# tos162uk.img / tos206uk.img). tools/download_roms.py fills this pool
-# from archive.org; empty is fine (EmuTOS default still boots).
+# staged 1:1 to /roms/ATARIST/ on the SD card (canonical names
+# tos106uk.img / tos162uk.img / tos206uk.img). tools/download_roms.py
+# fills this pool from archive.org; empty is fine (EmuTOS default boots).
 [[both.tree]]
 from = "repo/roms/tos"
-to = "roms/tos"
+to = "roms/ATARIST"
 mode = "keep"
 exclude = ["README.txt", "etos512uk.img"]
 
 [[both.file]]
 from = "sdcard/drives/ROMS.txt"
-to = "roms/drives/ROMS.txt"
+to = "roms/DRIVES/ROMS.txt"
 mode = "keep"
 
 [[both.file]]
@@ -760,6 +802,16 @@ to = "licenses/emutos.txt"
 mode = "metadata"
 
 [[both.file]]
+from = "sdcard/licenses/zesarux.txt"
+to = "licenses/zesarux.txt"
+mode = "metadata"
+
+[[both.file]]
+from = "sdcard/licenses/stella.txt"
+to = "licenses/stella.txt"
+mode = "metadata"
+
+[[both.file]]
 from = "repo/THIRD_PARTY_SOURCES.md"
 to = "licenses/third_party_sources.txt"
 mode = "metadata"
@@ -773,6 +825,128 @@ mode = "metadata"
 from = "firmware_boot/COPYING.linux"
 to = "licenses/linux.txt"
 mode = "metadata"
+
+# Pi 3 boot files (VideoCore IV firmware dispmanx + GLES2, 32-bit
+# kernel7l.img) and stable machine kernels.
+[[pi3.file]]
+from = "pi3_boot/bootcode.bin"
+to = "bootcode.bin"
+mode = "replace"
+
+[[pi3.file]]
+from = "pi3_boot/start.elf"
+to = "start.elf"
+mode = "replace"
+
+[[pi3.file]]
+from = "pi3_boot/fixup.dat"
+to = "fixup.dat"
+mode = "replace"
+
+[[pi3.file]]
+from = "pi3_boot/bcm2710-rpi-3-b.dtb"
+to = "bcm2710-rpi-3-b.dtb"
+mode = "replace"
+
+[[pi3.file]]
+from = "pi3_boot/bcm2710-rpi-3-b-plus.dtb"
+to = "bcm2710-rpi-3-b-plus.dtb"
+mode = "replace"
+
+[[pi3.file]]
+from = "pi3_boot/bcm2710-rpi-cm3.dtb"
+to = "bcm2710-rpi-cm3.dtb"
+mode = "replace"
+
+[[pi3.file]]
+from = "pi3_boot/bcm2710-rpi-zero-2.dtb"
+to = "bcm2710-rpi-zero-2.dtb"
+mode = "replace"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.c64"
+to = "kernel7l.img.c64"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.c64sc"
+to = "kernel7l.img.c64sc"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.scpu64"
+to = "kernel7l.img.scpu64"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.c128"
+to = "kernel7l.img.c128"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.vic20"
+to = "kernel7l.img.vic20"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.plus4"
+to = "kernel7l.img.plus4"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.pet"
+to = "kernel7l.img.pet"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.atari800"
+to = "kernel7l.img.atari800"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.dos"
+to = "kernel7l.img.dos"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.atarist"
+to = "kernel7l.img.atarist"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.amiga"
+to = "kernel7l.img.amiga"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.zxspectrum"
+to = "kernel7l.img.zxspectrum"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.cpc"
+to = "kernel7l.img.cpc"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.msx"
+to = "kernel7l.img.msx"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.a2600"
+to = "kernel7l.img.a2600"
+mode = "kernel"
+
+[[pi3.file]]
+to = "kernel7l.img.updater"
+mode = "kernel"
+optional = true
+
+[[pi3.file]]
+to = "kernel7l.img.intro"
+mode = "kernel"
+optional = true
 
 # Pi 4/Pi 400 boot files and AArch64 machine kernels.
 [[pi4.file]]
@@ -864,6 +1038,26 @@ mode = "kernel"
 [[pi4.file]]
 from = "kernels/kernel8.img.amiga"
 to = "kernel8.img.amiga"
+mode = "kernel"
+
+[[pi4.file]]
+from = "kernels/kernel8.img.zxspectrum"
+to = "kernel8.img.zxspectrum"
+mode = "kernel"
+
+[[pi4.file]]
+from = "kernels/kernel8.img.cpc"
+to = "kernel8.img.cpc"
+mode = "kernel"
+
+[[pi4.file]]
+from = "kernels/kernel8.img.msx"
+to = "kernel8.img.msx"
+mode = "kernel"
+
+[[pi4.file]]
+from = "kernels/kernel8.img.a2600"
+to = "kernel8.img.a2600"
 mode = "kernel"
 
 [[pi4.file]]
@@ -959,6 +1153,26 @@ to = "kernel_2712.img.amiga"
 mode = "kernel"
 
 [[pi5.file]]
+from = "kernels/kernel_2712.img.zxspectrum"
+to = "kernel_2712.img.zxspectrum"
+mode = "kernel"
+
+[[pi5.file]]
+from = "kernels/kernel_2712.img.cpc"
+to = "kernel_2712.img.cpc"
+mode = "kernel"
+
+[[pi5.file]]
+from = "kernels/kernel_2712.img.msx"
+to = "kernel_2712.img.msx"
+mode = "kernel"
+
+[[pi5.file]]
+from = "kernels/kernel_2712.img.a2600"
+to = "kernel_2712.img.a2600"
+mode = "kernel"
+
+[[pi5.file]]
 to = "kernel_2712.img.updater"
 mode = "kernel"
 optional = true
@@ -975,19 +1189,19 @@ optional = true
 from = "vice_data/C64"
 to = "palettes/C64"
 mode = "replace"
-include = ["c64hq.vpl", "c64s.vpl", "ccs64.vpl", "cjam.vpl", "colodore.vpl", "community-colors.vpl", "deekay.vpl", "frodo.vpl", "godot.vpl", "pc64.vpl", "pepto-ntsc-sony.vpl", "pepto-ntsc.vpl", "pepto-pal.vpl", "pepto-palold.vpl", "ptoing.vpl", "rgb.vpl"]
+include = ["c64hq.vpl", "c64s.vpl", "ccs64.vpl", "cjam.vpl", "colodore.vpl", "community-colors.vpl", "deekay.vpl", "frodo.vpl", "godot.vpl", "palette_C64_amber.vpl", "palette_C64_green.vpl", "pc64.vpl", "pepto-ntsc-sony.vpl", "pepto-ntsc.vpl", "pepto-pal.vpl", "pepto-palold.vpl", "ptoing.vpl", "rgb.vpl"]
 
 [[both.tree]]
 from = "vice_data/SCPU64"
 to = "palettes/SCPU64"
 mode = "replace"
-include = ["c64hq.vpl", "c64s.vpl", "ccs64.vpl", "cjam.vpl", "colodore.vpl", "community-colors.vpl", "deekay.vpl", "frodo.vpl", "godot.vpl", "pc64.vpl", "pepto-ntsc-sony.vpl", "pepto-ntsc.vpl", "pepto-pal.vpl", "pepto-palold.vpl", "ptoing.vpl", "rgb.vpl"]
+include = ["c64hq.vpl", "c64s.vpl", "ccs64.vpl", "cjam.vpl", "colodore.vpl", "community-colors.vpl", "deekay.vpl", "frodo.vpl", "godot.vpl", "palette_C64_amber.vpl", "palette_C64_green.vpl", "pc64.vpl", "pepto-ntsc-sony.vpl", "pepto-ntsc.vpl", "pepto-pal.vpl", "pepto-palold.vpl", "ptoing.vpl", "rgb.vpl"]
 
 [[both.tree]]
 from = "vice_data/C128"
 to = "palettes/C128/VICII"
 mode = "replace"
-include = ["c64hq.vpl", "c64s.vpl", "ccs64.vpl", "cjam.vpl", "colodore.vpl", "community-colors.vpl", "deekay.vpl", "frodo.vpl", "godot.vpl", "pc64.vpl", "pepto-ntsc-sony.vpl", "pepto-ntsc.vpl", "pepto-pal.vpl", "pepto-palold.vpl", "ptoing.vpl", "rgb.vpl"]
+include = ["c64hq.vpl", "c64s.vpl", "ccs64.vpl", "cjam.vpl", "colodore.vpl", "community-colors.vpl", "deekay.vpl", "frodo.vpl", "godot.vpl", "palette_C64_amber.vpl", "palette_C64_green.vpl", "pc64.vpl", "pepto-ntsc-sony.vpl", "pepto-ntsc.vpl", "pepto-pal.vpl", "pepto-palold.vpl", "ptoing.vpl", "rgb.vpl"]
 
 [[both.tree]]
 from = "vice_data/C128"
@@ -1011,7 +1225,28 @@ include = ["colodore_ted.vpl", "yape-ntsc.vpl"]
 from = "vice_data/PET"
 to = "palettes/PET"
 mode = "replace"
-include = ["amber.vpl", "white.vpl"]
+include = ["amber.vpl", "green.vpl", "white.vpl"]
+
+# BMX-generated phosphor variants (green/amber) for chips with no upstream
+# files. Additional files placed below the target directories remain
+# unmanaged and are discovered at runtime.
+[[both.tree]]
+from = "sdcard/palettes/VIC20"
+to = "palettes/VIC20"
+mode = "replace"
+include = ["vic20_amber.vpl", "vic20_green.vpl"]
+
+[[both.tree]]
+from = "sdcard/palettes/PLUS4"
+to = "palettes/PLUS4"
+mode = "replace"
+include = ["plus4_amber.vpl", "plus4_green.vpl"]
+
+[[both.tree]]
+from = "sdcard/palettes/C128/VDC"
+to = "palettes/C128/VDC"
+mode = "replace"
+include = ["vdc_amber.vpl", "vdc_green.vpl"]
 
 # Optional ROM payload.  Release staging leaves feature "roms" disabled and
 # emits MISSING-ROMS.txt; a manual full image enables it.  Missing individual
@@ -1201,98 +1436,98 @@ optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1001-901887+8-01.bin"
-to = "roms/drives/dos1001-901887+8-01.bin"
+to = "roms/DRIVES/dos1001-901887+8-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1540-325302+3-01.bin"
-to = "roms/drives/dos1540-325302+3-01.bin"
+to = "roms/DRIVES/dos1540-325302+3-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1541-325302-01+901229-05.bin"
-to = "roms/drives/dos1541-325302-01+901229-05.bin"
+to = "roms/DRIVES/dos1541-325302-01+901229-05.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1541ii-251968-03.bin"
-to = "roms/drives/dos1541ii-251968-03.bin"
+to = "roms/DRIVES/dos1541ii-251968-03.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1551-318008-01.bin"
-to = "roms/drives/dos1551-318008-01.bin"
+to = "roms/DRIVES/dos1551-318008-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1570-315090-01.bin"
-to = "roms/drives/dos1570-315090-01.bin"
+to = "roms/DRIVES/dos1570-315090-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1571-310654-05.bin"
-to = "roms/drives/dos1571-310654-05.bin"
+to = "roms/DRIVES/dos1571-310654-05.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1571cr-318047-01.bin"
-to = "roms/drives/dos1571cr-318047-01.bin"
+to = "roms/DRIVES/dos1571cr-318047-01.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos1581-318045-02.bin"
-to = "roms/drives/dos1581-318045-02.bin"
+to = "roms/DRIVES/dos1581-318045-02.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos2031-901484-03+05.bin"
-to = "roms/drives/dos2031-901484-03+05.bin"
+to = "roms/DRIVES/dos2031-901484-03+05.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos2040-901468-06+07.bin"
-to = "roms/drives/dos2040-901468-06+07.bin"
+to = "roms/DRIVES/dos2040-901468-06+07.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos3040-901468-11-13.bin"
-to = "roms/drives/dos3040-901468-11-13.bin"
+to = "roms/DRIVES/dos3040-901468-11-13.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos4040-901468-14-16.bin"
-to = "roms/drives/dos4040-901468-14-16.bin"
+to = "roms/DRIVES/dos4040-901468-14-16.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
 
 [[both.file]]
 from = "roms/DRIVES/dos9000-300516+7-revC.bin"
-to = "roms/drives/dos9000-300516+7-revC.bin"
+to = "roms/DRIVES/dos9000-300516+7-revC.bin"
 mode = "keep"
 features = ["roms"]
 optional = true
@@ -1579,6 +1814,68 @@ to = "systems/AMIGA/disks"
 mode = "keep"
 optional = true
 
+[[both.tree]]
+from = "usermedia/tapes/ZXSPECTRUM"
+to = "systems/ZXSPECTRUM/tapes"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/ZXSPECTRUM"
+to = "systems/ZXSPECTRUM/disks"
+mode = "keep"
+optional = true
+
+# CPC firmware pool for the CPC machine. Everything in repo roms/cpc/ is
+# staged 1:1 to /roms/CPC/ on the SD card (split names os/basic/amsdos,
+# fetched by tools/download_roms.py from TomHarte/CLK; like the
+# Atari/Amiga/TOS pools this is keep: fresh cards are seeded,
+# user-supplied genuine ROMs with the same names are never overwritten).
+[[both.tree]]
+from = "repo/roms/cpc"
+to = "roms/CPC"
+mode = "keep"
+exclude = ["README.txt"]
+
+# MSX firmware pool for the MSX machine. Everything in repo roms/msx/ is
+# staged 1:1 to /roms/MSX/ on the SD card (msx.rom 32K BIOS+BASIC;
+# keep: user-supplied genuine ROMs with the same names are never
+# overwritten).
+[[both.tree]]
+from = "repo/roms/msx"
+to = "roms/MSX"
+mode = "keep"
+exclude = ["README.txt"]
+
+# MSX media is flat: everything (carts, tapes, zips) lives directly in
+# /systems/MSX (plus snapshots/ for save states). The browsers open at
+# the machine root and filter by type, so no per-type subfolders.
+[[both.tree]]
+from = "usermedia/MSX"
+to = "systems/MSX"
+mode = "keep"
+optional = true
+
+# A2600 media is flat like MSX: cartridges (.a26/.bin, zips arrive
+# pre-extracted by the menu) live directly in /systems/A2600.
+[[both.tree]]
+from = "usermedia/A2600"
+to = "systems/A2600"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/tapes/CPC"
+to = "systems/CPC/tapes"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/CPC"
+to = "systems/CPC/disks"
+mode = "keep"
+optional = true
+
 # LOADPRG staging lands with the C64 (the only built machine whose
 # browser opens programs from its own root).
 [[both.directory]]
@@ -1767,6 +2064,82 @@ mode = "keep"
 
 [[both.directory]]
 to = "systems/AMIGA/disks"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/ZXSPECTRUM/tapes"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/ZXSPECTRUM/disks"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/ZXSPECTRUM/snapshots"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/CPC/tapes"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/CPC/disks"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/MSX"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/MSX/snapshots"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/A2600"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/A2600/snapshots"
+mode = "keep"
+
+# Screenshots land here (screenshots/<kernel>/shotNN.bmp, one folder per
+# screenshotting kernel); the kernels create them on demand as well.
+[[both.directory]]
+to = "screenshots/atari800"
+mode = "keep"
+
+[[both.directory]]
+to = "screenshots/dos"
+mode = "keep"
+
+[[both.directory]]
+to = "screenshots/atarist"
+mode = "keep"
+
+[[both.directory]]
+to = "screenshots/amiga"
+mode = "keep"
+
+[[both.directory]]
+to = "screenshots/zxspectrum"
+mode = "keep"
+
+[[both.directory]]
+to = "screenshots/cpc"
+mode = "keep"
+
+[[both.directory]]
+to = "screenshots/msx"
+mode = "keep"
+
+[[both.directory]]
+to = "screenshots/a2600"
+mode = "keep"
+
+# Per-machine settings files live here (settings-<machine>.txt plus
+# settings-ui.txt); the kernels create it on demand as well.
+[[both.directory]]
+to = "settings"
 mode = "keep"
 
 [[both.directory]]

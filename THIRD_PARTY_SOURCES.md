@@ -119,6 +119,21 @@ SDL threads/timers/net are replaced by Circle glue). All BMX specifics
 (`core_dyn_x86*`, `core_dynrec*`, `mmx.cpp`), `drive_overlay`, `drive_iso`,
 `dos_keyboard_layout`, `dos_programs.cpp`.
 
+## Stella
+
+### Stella 8.0_pre (Atari 2600 subset)
+
+| Item | Value |
+| --- | --- |
+| Role | Active emulator core for the Atari 2600 (`RASPI_A2600`) machine |
+| Local path | `third_party/stella` (`emucore/` full upstream tree + `common/` subset + `lib/json` headers) |
+| Build uses | `STELLA_EMUCORE_SRCS` (all of `emucore/`) + `STELLA_COMMON_SRCS` (no SDL, no libretro frontend, no `main()`); BMX backend in `src/a2600/a2600_stella_backend.*` selected via `-D__BMX__` in the vendored `common/MediaFactory.hxx` |
+| Version in tree | `8.0_pre` |
+| Upstream URL | https://stella-emu.github.io |
+| License | GPL-2.0 (`third_party/stella/License.txt`; staged as `/licenses/stella.txt`) |
+
+Excluded from the build: `os/` frontends (SDL/libretro/macOS/Windows; BMX providers in `src/a2600/` take their place), `debugger/`, `gui/`, `cheat/`, `tools/`, `lib/` except `json/` headers.
+
 ## Hatari
 
 ### Hatari 2.6.1 (ST/STE subset)
@@ -221,6 +236,46 @@ The Pi4/Pi5 staging scripts build `utils/c64/utils.d64` from
 boot partition. It is initially selected for drive 8, and can be changed or
 disabled under `Drives > Default disk`. The generated `utils.d64` is not
 stored in git.
+
+## ZEsarUX
+
+### ZEsarUX 13.1-SN (Spectrum subset)
+
+| Item | Value |
+| --- | --- |
+| Role | Active emulator core for the ZX Spectrum (`RASPI_ZXSPECTRUM`) machine |
+| Local path | `third_party/zesarux` (spectrum subset + BMX shims) |
+| Build uses | `third_party/zesarux/*.c`, `cores/core_reduced_spectrum.c`, `cores/core_spectrum.c` (3 helpers), `video/screen.c`, `audio/audio.c`, `soundchips/ay38912.c` + hand-written `third_party/zesarux/bmx-shim/compileoptions.h` |
+| Version in tree | `13.1-SN` |
+| Upstream URL | https://github.com/chernandezba/zesarux |
+| License | GPL-3.0 (`third_party/zesarux/LICENSE`; staged as `/licenses/zesarux.txt`) |
+
+The tree is a minimal subset (2-4 MB): Z80 CPU, ULA, contention, paging,
+reduced Spectrum frame loop, scanline renderer, audio mixer, AY chip and
+all upstream headers (include graph). Unused drivers (SDL/X11/ALSA/fbdev),
+the ZX Vision/menu tree, network/ZRCP, tape/snapshot stacks, timer/utils
+and debug modules are excluded; BMX providers in `src/zxspectrum/` take
+their place (video FBL blit, `circle_sound_write` drain, USB HID input,
+TAP trap loader, SNA snapshots, menus). Spectrum system ROMs ship in
+`third_party/zesarux/roms/` and are staged 1:1 to `/roms/ZXSPECTRUM/`.
+All BMX specifics live in `src/zxspectrum/`. The CPC kernel
+(`RASPI_CPC`, `src/cpc/`) reuses the same tree's Z80/AY/audio subset
+(`cpu.c`, `operaciones.c`, `cpus/z80_cod*.c`, `settings.c`, `audio/`,
+`soundchips/ay38912.c`) with a hand-written Gate Array/PPI/CRTC/memory
+module instead of vendored `machines/cpc.c` + `cores/core_cpc.c`;
+see `third_party/zesarux/README.BMX`.
+
+### ZEsarUX 13.0 MSX subset (`machines/msx.c`, `video_chips/vdp_9918a.c`)
+
+| Item | Value |
+| --- | --- |
+| Role | MSX1 hardware module + TMS9918A renderer for the MSX kernel (`RASPI_MSX`, `src/msx/`) |
+| Local path | `third_party/zesarux/machines/msx.c`, `third_party/zesarux/video_chips/vdp_9918a.c` |
+| Upstream URL | https://github.com/chernandezba/zesarux |
+| Upstream tag | `ZEsarUX-13.0` (closest stable to the tree's `13.1-SN`; MSX files are version-stable) |
+| Files | `src/machines/msx.c` (slots/PPI/PSG/cartridge/VDP port handlers, fullscreen + scanline render entry points), `src/video_chips/vdp_9918a.c` (VRAM port bodies, status, fullscreen + per-scanline TMS9918A renderers) — verbatim, no BMX edits |
+| License | GPL-3.0 (same `third_party/zesarux/LICENSE`) |
+| Not vendored | `src/cores/core_msx.c` (drags ZX Vision/zeng/snap/network deps; the frame loop is hand-written in `src/msx/msx_core.c`, mirroring `src/cpc/cpc_core.c`), `src/storage/tape.c` (cassette is our own `.cas` engine in `src/msx/msx_tape.cpp`, mirroring `src/cpc/cpc_tape.cpp`) |
 
 ## Circle and circle-stdlib
 

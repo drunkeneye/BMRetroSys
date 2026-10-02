@@ -27,10 +27,18 @@ extern "C" {
 #include <circle/devicenameservice.h>
 #include <circle/koptions.h>
 #include <circle/sound/hdmisoundbasedevice.h>
+#if RASPPI == 4 || RASPPI == 5
 #include <circle/sound/usbsoundbasedevice.h>
+#include <circle/usb/usbaudiostreaming.h>
+// Circle builds USB audio streaming only for Pi 4/5 (see Circle
+// lib/sound/Makefile: usbsound objects are RASPPI 4/5-only).
+#define BMX_HAS_USB_AUDIO 1
+#else
+// Pi3 (VideoCore IV legacy path): HDMI/PWM only, no USB audio streaming.
+#define BMX_HAS_USB_AUDIO 0
+#endif
 #include <circle/string.h>
 #include <circle/timer.h>
-#include <circle/usb/usbaudiostreaming.h>
 
 namespace {
 
@@ -167,6 +175,7 @@ bool sound_device_is_usb(const char *configured) {
          sound_device_matches(configured, "sndusb");
 }
 
+#if BMX_HAS_USB_AUDIO
 bool sample_rate_supported(
     const CUSBAudioStreamingDevice::TDeviceInfo &info,
     unsigned sample_rate) {
@@ -203,6 +212,7 @@ CUSBAudioStreamingDevice *find_usb_output_device(void) {
 
   return nullptr;
 }
+#endif
 
 bool start_sound_device(CSoundBaseDevice *device, const char *name,
                         unsigned queue_size_frames, unsigned channels) {
@@ -232,6 +242,7 @@ SoundOutputPriority ViceSound::DefaultOutputPriority(void) {
 }
 
 unsigned ViceSound::SelectSampleRate(void) {
+#if BMX_HAS_USB_AUDIO
   CUSBAudioStreamingDevice *streaming_device = find_usb_output_device();
   if (streaming_device) {
     CUSBAudioStreamingDevice::TDeviceInfo info =
@@ -252,14 +263,20 @@ unsigned ViceSound::SelectSampleRate(void) {
     }
   }
 
+#endif
   return SAMPLE_RATE;
 }
 
 boolean ViceSound::USBOutputAvailable(void) {
+#if BMX_HAS_USB_AUDIO
   return find_usb_output_device() != nullptr;
+#else
+  return FALSE;
+#endif
 }
 
 boolean ViceSound::GetUSBOutputProduct(char *buffer, unsigned buffer_size) {
+#if BMX_HAS_USB_AUDIO
   CUSBAudioStreamingDevice *streaming_device = find_usb_output_device();
   if (buffer != nullptr && buffer_size > 0) {
     const char *product = streaming_device != nullptr
@@ -270,6 +287,12 @@ boolean ViceSound::GetUSBOutputProduct(char *buffer, unsigned buffer_size) {
     buffer[buffer_size - 1U] = '\0';
   }
   return streaming_device != nullptr;
+#else
+  if (buffer != nullptr && buffer_size > 0) {
+    buffer[0] = '\0';
+  }
+  return FALSE;
+#endif
 }
 
 ViceSound::ViceSound(CInterruptSystem *pInterrupt,
@@ -286,6 +309,7 @@ ViceSound::ViceSound(CInterruptSystem *pInterrupt,
       mQueueMinimumFillFrames(FRAG_SIZE * NUM_FRAGS),
       mQueueDiagnosticsArmed(FALSE),
       mWriteWaitCount(0U),
+      mStallCalls(0U),
       mVolumePercent(100), mDiagnosticsLastSample{0, 0},
       mDiagnosticsLastSampleValid{FALSE, FALSE}, mDiagnosticsZeroRun(0U),
       mDiagnosticsChannelZeroRun{0U, 0U},
@@ -318,6 +342,7 @@ boolean ViceSound::StartHDMI(void) {
 }
 
 boolean ViceSound::StartUSB(void) {
+#if BMX_HAS_USB_AUDIO
   mSoundDevice = new CUSBSoundBaseDevice(mSampleRate,
                                          CUSBSoundBaseDevice::DeviceModeTXOnly,
                                          0);
@@ -330,6 +355,10 @@ boolean ViceSound::StartUSB(void) {
   delete mSoundDevice;
   mSoundDevice = nullptr;
   return FALSE;
+#else
+  (void) mSoundDevice;
+  return FALSE;
+#endif
 }
 
 boolean ViceSound::Playback(int volume, int channels,
@@ -339,6 +368,7 @@ boolean ViceSound::Playback(int volume, int channels,
   mQueueFillFrames = 0;
   mQueueMinimumFillFrames = mQueueSizeFrames;
   mQueueDiagnosticsArmed = FALSE;
+  mStallCalls = 0;
   memset(&mDiagnostics, 0, sizeof mDiagnostics);
   mDiagnostics.enabled = BMX_SID_DIAGNOSTICS ? 1U : 0U;
   mDiagnostics.hdmi_queue_margin_min_frames = UINT32_MAX;
@@ -448,7 +478,6 @@ unsigned ViceSound::AddChunk(s16 *pBuffer, unsigned nChunkSize) {
     if (gap_us > 20000U) increment(&mDiagnostics.write_gap_over_20ms);
     if (gap_us > 40000U) increment(&mDiagnostics.write_gap_over_40ms);
   }
-  uint32_t waits_this_call = 0U;
 
   const uint32_t channels = mNumChannels == 0U ? 1U : mNumChannels;
   const uint32_t frames = nChunkSize / channels;
@@ -532,6 +561,7 @@ unsigned ViceSound::AddChunk(s16 *pBuffer, unsigned nChunkSize) {
   update_max(&mDiagnostics.pcm_constant_run_max_ch0, constant_run_max[0]);
   update_max(&mDiagnostics.pcm_constant_run_max_ch1, constant_run_max[1]);
 #endif
+  uint32_t waits_this_call = 0U;
 
   size_t total_bytes = (size_t) nChunkSize * BYTES_PER_SAMPLE;
   const s16 *write_buffer = pBuffer;
@@ -565,13 +595,32 @@ unsigned ViceSound::AddChunk(s16 *pBuffer, unsigned nChunkSize) {
       continue;
     }
     ++mWriteWaitCount;
-#if BMX_SID_DIAGNOSTICS
     ++waits_this_call;
-#endif
+    // Bound the stall: an active-but-wedged device must never freeze the
+    // emulator (or mute it while looking alive). ~200ms max per call, then
+    // drop the remainder like the inactive-device path. Healthy devices
+    // never come near this (their queue has room; see the callers).
+    if (waits_this_call > 4000U) {
+      break;
+    }
     // The audio queue is drained by the device/IRQ path. In multicore builds
     // Circle's scheduler belongs to core 0, so the VICE core waits only for
     // device progress and never enters the scheduler here.
     CTimer::SimpleusDelay(50U);
+  }
+
+  if (nChunkSize != 0U && written == 0U && waits_this_call > 0U) {
+    // A live-looking device that repeatedly accepts nothing is wedged
+    // (stale DMA, failed handshake). Drop it after ~2s of consecutive
+    // total stalls so the next boot_complete recreates it; a device that
+    // recovers on its own resets the count via any progressive call.
+    if (++mStallCalls >= 50) {
+      mStallCalls = 0;
+      printf("sound: output stalled, dropping device for re-init\r\n");
+      CancelPlayback();
+    }
+  } else {
+    mStallCalls = 0;
   }
 
   if (scaled_buffer) {

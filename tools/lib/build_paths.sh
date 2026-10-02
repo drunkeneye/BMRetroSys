@@ -24,6 +24,9 @@ bmc64_stage_dir() {
   local board="$1"
 
   case "$board" in
+    pi3)
+      printf '%s\n' "${PI3_STAGE_DIR:-${BMC64_STAGE_DIR:-$SRC_DIR/pi3-test/sdcard}}"
+      ;;
     pi4)
       printf '%s\n' "${PI4_STAGE_DIR:-${BMC64_STAGE_DIR:-$SRC_DIR/pi4-test/sdcard}}"
       ;;

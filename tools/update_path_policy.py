@@ -100,10 +100,11 @@ def _kernel_inventory(
             _error(f"{board} has no kernel targets")
         bases.append(base)
         board_machines[board] = found
+    pi3 = board_machines["pi3"]
     pi4 = board_machines["pi4"]
     pi5 = board_machines["pi5"]
-    if pi4 != pi5:
-        _error("pi4 and pi5 kernel machine inventories differ")
+    if pi3 != pi4 or pi4 != pi5:
+        _error("pi3, pi4 and pi5 kernel machine inventories differ")
     required = tuple(machine for machine, is_required in pi4 if is_required)
     optional = tuple(machine for machine, is_required in pi4 if not is_required)
     machines = required + optional

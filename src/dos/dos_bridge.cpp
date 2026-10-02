@@ -22,8 +22,11 @@
 #include "dos_debug.h"
 #include "dos_input.h"
 #include "dos_perf.h"
+#include "dos_snapshot.h"
 #include "dos_sound.h"
 #include "dos_video.h"
+
+#include "src/monitor_phosphor.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -34,11 +37,29 @@
 
 #include <string>
 
+// Full struct menu_item for the anchors below (emux_api.h only forwards).
+extern "C" {
+#include "ui.h"
+}
+
 namespace bmx {
 namespace dos {
 
 // Placeholder anchor for DOSBox-X-specific bridge state (drive names, staged
 // settings). Real backing store lands with Phases 1-4.
+struct menu_item *s_monitor_item = nullptr;
+
+void sync_all_menu_items(void) {
+  if (s_monitor_item != nullptr) {
+    const int cur = video_get_monitor();
+    for (int i = 0; i < s_monitor_item->num_choices; i++) {
+      if (s_monitor_item->choice_ints[i] == cur) {
+        s_monitor_item->value = i;
+        break;
+      }
+    }
+  }
+}
 
 }  // namespace dos
 }  // namespace bmx
@@ -133,12 +154,28 @@ void emux_set_cart_default(void) {
 }
 
 int emux_load_state(char *filename) {
-  (void)filename;
+  if (filename == nullptr || *filename == '\0') {
+    return -1;
+  }
+  // Guest must be paused (menu trap guarantees it); components serialize
+  // mid-instruction exactly like upstream slot saves.
+  if (!::bmx::dos::snapshot_load_from_file(filename)) {
+    ::bmx::dos::debug_log("snapshot: load failed '%s'", filename);
+    return -1;
+  }
+  ::bmx::dos::debug_log("snapshot: loaded '%s'", filename);
   return 0;
 }
 
 int emux_save_state(char *filename) {
-  (void)filename;
+  if (filename == nullptr || *filename == '\0') {
+    return -1;
+  }
+  if (!::bmx::dos::snapshot_save_to_file(filename)) {
+    ::bmx::dos::debug_log("snapshot: save failed '%s'", filename);
+    return -1;
+  }
+  ::bmx::dos::debug_log("snapshot: saved '%s'", filename);
   return 0;
 }
 
@@ -587,6 +624,28 @@ void emux_add_machine_options(struct menu_item *parent) {
     it->choice_ints[i] = i;
   }
   it->value = ::bmx::dos::perf_cycles_current();
+
+  it = ::bmx::dos::s_monitor_item =
+      ui_menu_add_multiple_choice(MENU_DOS_MONITOR, parent, (char *)"Monitor");
+  it->num_choices = 4;
+  snprintf(it->choices[0], sizeof it->choices[0], "Color");
+  it->choice_ints[0] = BMX_MONITOR_COLOR;
+  snprintf(it->choices[1], sizeof it->choices[1], "B&W");
+  it->choice_ints[1] = BMX_MONITOR_BW;
+  snprintf(it->choices[2], sizeof it->choices[2], "Green");
+  it->choice_ints[2] = BMX_MONITOR_GREEN;
+  snprintf(it->choices[3], sizeof it->choices[3], "Amber");
+  it->choice_ints[3] = BMX_MONITOR_AMBER;
+  {
+    const int cur = ::bmx::dos::video_get_monitor();
+    it->value = 0;
+    for (i = 0; i < it->num_choices; i++) {
+      if (it->choice_ints[i] == cur) {
+        it->value = i;
+        break;
+      }
+    }
+  }
 }
 
 struct menu_item *emux_add_cartridge_options(struct menu_item *parent) {
@@ -808,6 +867,7 @@ int emux_save_settings(void) {
 }
 
 void emux_load_settings_done(void) {
+  ::bmx::dos::sync_all_menu_items();
 }
 
 void emux_load_additional_settings(void) {}
@@ -821,6 +881,7 @@ void emux_save_additional_settings(FILE *fp) {
   // Manual overrides win over the preset: saved + loaded after it.
   fprintf(fp, "dos_core=%d\n", ::bmx::dos::perf_core_current());
   fprintf(fp, "dos_cycles=%d\n", ::bmx::dos::perf_cycles_current());
+  fprintf(fp, "dos_monitor=%d\n", ::bmx::dos::video_get_monitor());
 }
 
 int emux_handle_loaded_setting(char *name, char *value_str, int value) {
@@ -838,6 +899,11 @@ int emux_handle_loaded_setting(char *name, char *value_str, int value) {
   }
   if (!strcmp(name, "dos_cycles")) {
     ::bmx::dos::perf_set_cycles(value);
+    return 1;
+  }
+  if (!strcmp(name, "dos_monitor")) {
+    ::bmx::dos::video_set_monitor(value);
+    ::bmx::dos::sync_all_menu_items();
     return 1;
   }
   return 0;
@@ -871,6 +937,14 @@ int emux_handle_menu_change(struct menu_item *item) {
         ui_info("CPU change reboots DOS");
       }
       return 1;
+    case MENU_DOS_MONITOR: {
+      int v = item->value;
+      if (v >= 0 && v < item->num_choices) {
+        v = item->choice_ints[v];
+      }
+      ::bmx::dos::video_set_monitor(v);
+      return 1;
+    }
     case MENU_ATARI_SCREENSHOT: {
       // Auto-named BMP dump of the VIC canvas (same volume preference as
       // the atari800 flow: USB stick first, then SD system volume).

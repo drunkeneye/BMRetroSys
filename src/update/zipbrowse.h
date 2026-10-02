@@ -37,6 +37,14 @@ int zipbrowse_list(const char *prefix, void (*visit)(const char *name,
 int zipbrowse_extract(const char *entry_path, const char *out_abs_path,
                       char *err, size_t errsz);
 
+// Extract every file entry to out_abs_dir, preserving internal paths
+// (directories are created). Completed files are CRC/size verified;
+// a failing file is removed and aborts with its status. Determinate
+// progress with cancel; cancelled or failed runs keep verified files.
+// Used by DOS game autostart so the mounted folder holds the whole game,
+// not just the picked executable.
+int zipbrowse_extract_all(const char *out_abs_dir, char *err, size_t errsz);
+
 void zipbrowse_close(void);
 
 // mkdir -p for absolute volume paths. Returns 0 on success.

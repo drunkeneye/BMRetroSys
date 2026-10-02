@@ -1,0 +1,56 @@
+#
+# VICE Palette file (BMX-generated phosphor variant)
+#
+# Syntax:
+# Red Green Blue
+#
+# NAME:VDC Green (P1 phosphor)
+# TYPE:VDC
+
+# 0
+00 00 00
+
+# 1
+12 55 00
+
+# 2
+04 13 00
+
+# 3
+16 68 00
+
+# 4
+15 63 00
+
+# 5
+27 B8 00
+
+# 6
+19 77 00
+
+# 7
+2C CC 00
+
+# 8
+0A 32 00
+
+# 9
+1D 87 00
+
+# 10
+0F 46 00
+
+# 11
+21 9B 00
+
+# 12
+15 64 00
+
+# 13
+32 EB 00
+
+# 14
+24 AA 00
+
+# 15
+37 FF 00

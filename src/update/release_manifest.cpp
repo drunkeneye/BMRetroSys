@@ -831,7 +831,9 @@ ManifestParseStatus Parser::ParseAsset(int index, bool store,
     if (!CopyString(Member(index, "board_family"), board, sizeof(board))) {
         return ManifestParseStatus::InvalidValue;
     }
-    if (strcmp(board, "pi4") == 0) {
+    if (strcmp(board, "pi3") == 0) {
+        asset->board = BoardFamily::Pi3;
+    } else if (strcmp(board, "pi4") == 0) {
         asset->board = BoardFamily::Pi4Pi400;
     } else if (strcmp(board, "pi5") == 0) {
         asset->board = BoardFamily::Pi5Pi500;
@@ -839,13 +841,22 @@ ManifestParseStatus Parser::ParseAsset(int index, bool store,
         return ManifestParseStatus::InvalidValue;
     }
     const int models = Member(index, "supported_models");
-    if (models < 0 || tokens_[models].type != JSON_TOKEN_ARRAY ||
-        DirectChildren(models) != 2U) {
+    if (models < 0 || tokens_[models].type != JSON_TOKEN_ARRAY) {
         return ManifestParseStatus::InvalidValue;
     }
+    const size_t model_count = DirectChildren(models);
     char first_model[32];
     char second_model[32];
-    if (!CopyString(DirectChild(models, 0U), first_model, sizeof(first_model)) ||
+    if (asset->board == BoardFamily::Pi3) {
+        // Pi3 asset lists a single "Raspberry Pi 3" model entry.
+        if (model_count != 1U ||
+            !CopyString(DirectChild(models, 0U), first_model, sizeof(first_model)) ||
+            strcmp(first_model, "Raspberry Pi 3") != 0) {
+            return ManifestParseStatus::InvalidValue;
+        }
+    } else if (
+        model_count != 2U ||
+        !CopyString(DirectChild(models, 0U), first_model, sizeof(first_model)) ||
         !CopyString(DirectChild(models, 1U), second_model,
                     sizeof(second_model)) ||
         (asset->board == BoardFamily::Pi4Pi400 &&
@@ -872,10 +883,16 @@ ManifestParseStatus Parser::ParseAsset(int index, bool store,
         return ManifestParseStatus::InvalidValue;
     }
     char expected_filename[161];
+    const char *board_slug = "pi5-pi500";
+    if (asset->board == BoardFamily::Pi4Pi400) {
+        board_slug = "pi4-pi400";
+    } else if (asset->board == BoardFamily::Pi3) {
+        board_slug = "pi3";
+    }
     const int filename_size = snprintf(
         expected_filename, sizeof(expected_filename), "bmx-%s-%s-boot.zip",
         manifest_->version,
-        asset->board == BoardFamily::Pi4Pi400 ? "pi4-pi400" : "pi5-pi500");
+        board_slug);
     if (filename_size < 0 ||
         static_cast<size_t>(filename_size) >= sizeof(expected_filename) ||
         strcmp(asset->filename, expected_filename) != 0) {
@@ -923,7 +940,7 @@ ManifestParseStatus Parser::ParseAssets(int index) {
         return ManifestParseStatus::WrongType;
     }
     const size_t count = DirectChildren(index);
-    if (count != 2U) return ManifestParseStatus::LimitExceeded;
+    if (count != 2U && count != 3U) return ManifestParseStatus::LimitExceeded;
     BoardFamily previous_board = BoardFamily::Unknown;
     bool found_target = false;
     uint8_t board_mask = 0U;
@@ -941,7 +958,13 @@ ManifestParseStatus Parser::ParseAssets(int index) {
             return ManifestParseStatus::DuplicateAsset;
         }
         previous_board = parsed.board;
-        board_mask |= parsed.board == BoardFamily::Pi4Pi400 ? 1U : 2U;
+        if (parsed.board == BoardFamily::Pi4Pi400) {
+            board_mask |= 1U;
+        } else if (parsed.board == BoardFamily::Pi5Pi500) {
+            board_mask |= 2U;
+        } else if (parsed.board == BoardFamily::Pi3) {
+            board_mask |= 4U;
+        }
         if (parsed.board == target_board_) {
             if (found_target) return ManifestParseStatus::DuplicateAsset;
             memset(&manifest_->asset, 0, sizeof(manifest_->asset));
@@ -950,7 +973,7 @@ ManifestParseStatus Parser::ParseAssets(int index) {
             found_target = true;
         }
     }
-    if (board_mask != 3U) return ManifestParseStatus::DuplicateAsset;
+    if (board_mask != 3U && board_mask != 7U) return ManifestParseStatus::DuplicateAsset;
     if (!found_target) return ManifestParseStatus::TargetAssetMissing;
 
     // FAT is case-insensitive. The host tool performs full Unicode NFC

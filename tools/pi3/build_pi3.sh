@@ -1,0 +1,222 @@
+#!/bin/bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SRC_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+STAGE_ARGS=()
+BUILD_PROFILE="${BMC64_BUILD_PROFILE:-release}"
+BUILD_ONLY=0
+STAGE_DIR_SET=0
+STAGE_DIR_OVERRIDE=""
+BUILD_MACHINES=()
+BUILD_JOBS="${BMX_BUILD_JOBS:-$(nproc)}"
+GENERATE_LISTING="${BMX_GENERATE_LISTING:-0}"
+CLEAN_BUILD=0
+DOWNLOAD_ROMS="${BMX_DOWNLOAD_ROMS:-1}"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Builds Pi3 AArch32 legacy-display kernels (VideoCore IV dispmanx +
+GLES2 + crt-pi, kernel7l.img) and stages a boot tree.
+
+Options:
+  --profile      staging boot config profile (default: release)
+  --debug-uart   alias for --profile debug
+  --build-only   build kernels without creating an SD-card stage
+  --stage-dir    override the output staging directory
+  --machine      build one machine (repeatable; requires --build-only)
+  --jobs         maximum parallel compiler jobs (default: host CPU count)
+  --listing      generate full kernel disassembly listings
+  --no-listing   skip disassembly listings (default)
+  --clean        discard the selected configuration cache before building
+  --download-roms
+                 fetch missing firmware ROMs (zimmers.net, FW-Altirra,
+                 archive.org kickstarts/TOS) into roms/ before staging
+                 (default: on)
+  --no-download-roms
+                 skip ROM fetching (staging reports MISSING-ROMS.txt)
+  --cmdline-option
+                 set or override one staged cmdline.txt option; may be passed multiple times
+EOF
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --profile)
+      if [ -z "${2:-}" ]; then
+        echo "--profile requires release or debug" >&2
+        exit 1
+      fi
+      case "$2" in
+        release|debug) ;;
+        *)
+          echo "--profile requires release or debug" >&2
+          exit 1
+          ;;
+      esac
+      BUILD_PROFILE="$2"
+      STAGE_ARGS+=("--profile" "$2")
+      shift 2
+      ;;
+    --debug-uart)
+      BUILD_PROFILE=debug
+      STAGE_ARGS+=("--profile" "debug")
+      shift
+      ;;
+    --build-only)
+      BUILD_ONLY=1
+      shift
+      ;;
+    --machine)
+      if [ -z "${2:-}" ]; then
+        echo "--machine requires a machine name" >&2
+        exit 1
+      fi
+      BUILD_MACHINES+=("$2")
+      shift 2
+      ;;
+    --jobs)
+      if [ -z "${2:-}" ]; then
+        echo "--jobs requires a positive integer" >&2
+        exit 1
+      fi
+      BUILD_JOBS="$2"
+      shift 2
+      ;;
+    --listing)
+      GENERATE_LISTING=1
+      shift
+      ;;
+    --no-listing)
+      GENERATE_LISTING=0
+      shift
+      ;;
+    --clean)
+      CLEAN_BUILD=1
+      shift
+      ;;
+    --download-roms)
+      DOWNLOAD_ROMS=1
+      shift
+      ;;
+    --no-download-roms)
+      DOWNLOAD_ROMS=0
+      shift
+      ;;
+    --stage-dir)
+      if [ -z "${2:-}" ]; then
+        echo "--stage-dir requires a directory" >&2
+        exit 1
+      fi
+      STAGE_ARGS+=("--stage-dir" "$2")
+      STAGE_DIR_SET=1
+      STAGE_DIR_OVERRIDE="$2"
+      shift 2
+      ;;
+    --cmdline-option)
+      if [ -z "${2:-}" ] || [[ "$2" != *=* ]] || [[ "$2" == =* ]]; then
+        echo "--cmdline-option requires KEY=VALUE" >&2
+        exit 1
+      fi
+      STAGE_ARGS+=("--cmdline-option" "$2")
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unexpected argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ "$BUILD_ONLY" -eq 1 ] && [ "$STAGE_DIR_SET" -eq 1 ]; then
+  echo "--build-only cannot be combined with --stage-dir" >&2
+  exit 1
+fi
+if [ "${#BUILD_MACHINES[@]}" -gt 0 ] && [ "$BUILD_ONLY" -ne 1 ]; then
+  echo "--machine requires --build-only so staging cannot mix partial kernel sets" >&2
+  exit 1
+fi
+case "$BUILD_JOBS" in
+  ''|*[!0-9]*|0) echo "--jobs requires a positive integer" >&2; exit 1 ;;
+esac
+
+export BMC64_BUILD_PROFILE="$BUILD_PROFILE"
+export BMX_BUILD_JOBS="$BUILD_JOBS"
+export BMX_GENERATE_LISTING="$GENERATE_LISTING"
+export BMX_BUILD_CLEAN="$CLEAN_BUILD"
+
+cat <<'EOF'
+Building Pi3 AArch32 legacy-display kernels (VideoCore IV dispmanx + GLES2)
+with pinned Mbed TLS support.
+
+Currently wired VICE 3.10 machines: C64 (x64/x64sc), SCPU64, C128, VIC20, Plus/4, PET;
+plus Atari800, DOS, Atari ST, Amiga, ZX Spectrum, CPC, MSX, Atari 2600.
+EOF
+
+. "$SRC_DIR/tools/pi3/vice310_build_common.sh"
+
+BMX_PI3_MACHINE_LIST="$(
+  python3 "$SRC_DIR/tools/sd_layout.py" kernel-machines --board pi3
+)"
+[[ -n "$BMX_PI3_MACHINE_LIST" ]] || {
+  echo "sd-layout.toml defines no required Pi 3 machine kernels" >&2
+  exit 1
+}
+mapfile -t BMX_PI3_MACHINES <<<"$BMX_PI3_MACHINE_LIST"
+if [ "${#BUILD_MACHINES[@]}" -gt 0 ]; then
+  for machine in "${BUILD_MACHINES[@]}"; do
+    grep -Fx "$machine" <<<"$BMX_PI3_MACHINE_LIST" >/dev/null || {
+      echo "unsupported Pi 3 machine: $machine" >&2
+      exit 1
+    }
+  done
+  BMX_PI3_MACHINES=("${BUILD_MACHINES[@]}")
+fi
+# Build-identity stamps (About label via BMX_BUILD_STAMP, debug log tag via
+# __DATE__/__TIME__) live in menu.c and atari800_debug.cpp. make only
+# rebuilds changed sources, so without this the stamps freeze at whatever
+# build last touched those files and misidentify the kernel. Touching them
+# recompiles exactly two TUs per variant.
+touch "$SRC_DIR/third_party/common/menu.c" \
+      "$SRC_DIR/src/atari800/atari800_debug.cpp" \
+      "$SRC_DIR/src/atarist/atarist_debug.cpp" \
+      "$SRC_DIR/src/amiga/amiga_debug.cpp"
+# DOSBox-X kernel tag (BUILD TAG in bmretrosys-dos.log) lives in the generated
+# src/dos/dos_build_tag.h, included by dos_debug.cpp and
+# dos_boot.cpp. Regenerate it on EVERY build so the log tag always
+# identifies the running kernel; make rebuilds the two dependents via the
+# header dependency. Rule: never stage a kernel without a fresh tag.
+DOS_TAG="$(date +"%Y-%m-%d %H:%M:%S %z")"
+cat > "$SRC_DIR/src/dos/dos_build_tag.h" <<EOF
+//
+// dos_build_tag.h
+//
+// AUTO-GENERATED by tools/pi3/build_pi3.sh on every kernel build.
+// DO NOT EDIT.
+#ifndef dos_build_tag_h
+#define dos_build_tag_h
+
+#define DOS_BUILD_TAG "$DOS_TAG"
+
+#endif
+EOF
+build_vice310_machines "${BMX_PI3_MACHINES[@]}"
+if [ "$BUILD_ONLY" -eq 0 ]; then
+  if [ "$DOWNLOAD_ROMS" -eq 1 ]; then
+    echo "Fetching missing firmware ROMs into roms/ ..."
+    python3 "$SRC_DIR/tools/download_roms.py" || echo \
+      "ROM download had failures; staging continues (see MISSING-ROMS.txt)" >&2
+  fi
+  "$SRC_DIR/tools/pi3/stage_pi3_sd.sh" \
+    --kernel-dir "$BMX_VARIANT_ROOT/images" "${STAGE_ARGS[@]}"
+  "$SRC_DIR/tools/fetch_demos.sh" \
+    "${STAGE_DIR_OVERRIDE:-$SRC_DIR/pi3-test/sdcard}"
+fi

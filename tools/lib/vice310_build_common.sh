@@ -106,6 +106,26 @@ case "$BMX_BUILD_BOARD" in
         ;;
     esac
     ;;
+  pi3)
+    # Pi3: 32-bit only, VideoCore IV legacy display (firmware dispmanx +
+    # GLES2 + crt-pi). Cortex-A53 tuning for BCM2710.
+    NEWLIB_SUBDIR="install/arm-none-circle"
+    TOOLCHAIN_NAME="arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi"
+    TOOLCHAIN_URL_BASE="https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel"
+    TOOL_PREFIX="arm-none-eabi-"
+    VICE_HOST="arm-none-eabi"
+    CIRCLE_CONFIG_ARGS=(
+      --raspberrypi=3 --kernel-max-size 48
+      --option ARM_ALLOW_MULTI_CORE --option USE_USB_SOF_INTR
+      --opt-tls --prefix arm-none-eabi-
+    )
+    VICE_ARCH_FLAGS="-mcpu=cortex-a53 -mlittle-endian -marm -mfpu=neon-fp-armv8 -mfloat-abi=hard"
+    VICE_C_WARNING_FLAGS=" -Wno-incompatible-pointer-types"
+    TARGET_BASENAME="kernel7l"
+    IMAGE_BASENAME="kernel7l"
+    TARGET_AARCH=32
+    BMX_PI4_LEGACY_DISPLAY=1
+    ;;
   pi5)
     NEWLIB_SUBDIR="install/aarch64-none-circle"
     TOOLCHAIN_NAME="arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf"
@@ -615,6 +635,32 @@ vice310_machine_config() {
       VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-AMIGA-310
       VICE310_CLASS=RASPI_AMIGA; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
       VICE310_IMAGE_SUFFIX=amiga; VICE310_COPY_DEFAULT=0 ;;
+    zxspectrum)
+      # zxspectrum compiles directly (src/zxspectrum glue + vendored
+      # third_party/zesarux spectrum subset; no VICE target or arch
+      # archive).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-ZXSPECTRUM-310
+      VICE310_CLASS=RASPI_ZXSPECTRUM; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=zxspectrum; VICE310_COPY_DEFAULT=0 ;;
+    cpc)
+      # cpc compiles directly (src/cpc glue + CPC hardware module +
+      # vendored Z80/AY/audio subset; no VICE target or arch archive).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-CPC-310
+      VICE310_CLASS=RASPI_CPC; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=cpc; VICE310_COPY_DEFAULT=0 ;;
+    msx)
+      # msx compiles directly (src/msx glue + vendored machines/msx.c +
+      # video_chips/vdp_9918a.c + Z80/AY/audio subset; no VICE target).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-MSX-310
+      VICE310_CLASS=RASPI_MSX; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=msx; VICE310_COPY_DEFAULT=0 ;;
+    a2600)
+      # a2600 compiles directly (src/a2600 glue + BMX Stella backend +
+      # vendored Stella emucore/common subset; no VICE target or arch
+      # archive).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-A2600-310
+      VICE310_CLASS=RASPI_A2600; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=a2600; VICE310_COPY_DEFAULT=0 ;;
     *) echo "unsupported VICE 3.10 machine: $machine" >&2; return 1 ;;
   esac
 }

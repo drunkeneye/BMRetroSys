@@ -1,3 +1,17 @@
+Version 0.3 (2026-10-02)
+------------------
+* New: Atari 2600 machine (vendored Stella core, cartridge slot,
+  splash logo, F12 menu, Select/Reset keyboard shortcuts defaulting
+  to Space/Enter, remappable and persisted).
+* New: monitor emulation everywhere (Color/B&W/Green/Amber, applied
+  live): per-pixel phosphor mapping on MSX, Spectrum, CPC, Amiga,
+  ST, DOS and 2600 (Atari 8-bit already had it); VICE machines get
+  the upstream green/amber `.vpl` palettes in the Palette menu (plus
+  generated green/amber variants for VIC20, Plus/4 and the C128 VDC).
+* Fix: ZIP browser opens ROM packs with non-ASCII names
+  (French/Portuguese DOS codepages and UTF-8 fold to FAT-safe ASCII;
+  strict firmware update flow unchanged).
+
 Version 0.2 (2026-09-27)
 ------------------
 * New: product rename BMX8bit → BMRetroSys (About, logs, SD paths,

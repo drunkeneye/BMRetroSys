@@ -1,0 +1,56 @@
+#
+# VICE Palette file (BMX-generated phosphor variant)
+#
+# Syntax:
+# Red Green Blue
+#
+# NAME:VIC20 Amber
+# TYPE:VIC
+
+# 0
+00 00 00
+
+# 1
+FF A9 00
+
+# 2
+47 2F 00
+
+# 3
+A8 6F 00
+
+# 4
+27 19 00
+
+# 5
+5D 3D 00
+
+# 6
+1B 11 00
+
+# 7
+B8 79 00
+
+# 8
+97 64 00
+
+# 9
+AA 70 00
+
+# 10
+A1 6A 00
+
+# 11
+B2 75 00
+
+# 12
+69 45 00
+
+# 13
+95 62 00
+
+# 14
+7A 50 00
+
+# 15
+E1 95 00

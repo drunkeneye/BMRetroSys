@@ -1,0 +1,249 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#include "CompuMate.hxx"
+#include "System.hxx"
+#include "M6532.hxx"
+#include "CartCM.hxx"
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+CartridgeCM::CartridgeCM(ByteSpan image, string_view md5,
+                         const Settings& settings)
+  : Cartridge(settings, md5)
+{
+  // Copy the ROM image into my buffer
+  std::copy_n(image.data(), std::min(16_KB, image.size()), myImage.begin());
+  createRomAccessArrays(16_KB);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeCM::reset()
+{
+  Cartridge::reset();
+
+  initializeRAM(myRAM);
+
+  // On powerup, the last bank of ROM is enabled and RAM is disabled
+  mySWCHA = 0xFF;
+  initializeStartBank(mySWCHA & 0x3U);
+
+  // Upon reset we switch to the startup bank
+  bank(startBank());
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeCM::install(System& system)
+{
+  mySystem = &system;
+
+  // Mirror all access in RIOT; by doing so we're taking responsibility
+  // for that address space in peek and poke below.
+  mySystem->m6532().installDelegate(system, *this);
+
+  // Install pages for the startup bank
+  bank(startBank());
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 CartridgeCM::peek(uInt16 address)
+{
+  // NOTE: This does not handle accessing cart ROM/RAM, however, this method
+  // should never be called for ROM/RAM because of the way page accessing
+  // has been setup (it will only ever be called for RIOT reads)
+  uInt8 value = mySystem->m6532().peek(address);
+
+  // Inject cassette audio into SWCHA D7 (A9=1 selects I/O; offset 0 = SWCHA)
+  if((address & 0x0200U) && !(address & 0x07U) && myCompuMate)
+    value = (value & 0x7FU) | (U32(myCompuMate->cassetteBit()) << 7U);
+
+  return value;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeCM::poke(uInt16 address, uInt8 value)
+{
+  // NOTE: This could be called for RIOT writes or cart ROM writes
+  // In the latter case, the write is ignored
+  if(!(address & 0x1000U))
+  {
+    // RIOT mirroring, check bankswitch
+    if(address == 0x280)
+    {
+      const uInt8 prevSWCHA = mySWCHA;
+      mySWCHA = value;
+      bank(mySWCHA & 0x3U);
+      if(myCompuMate)
+      {
+        uInt8& column = myCompuMate->column();
+        if(value & 0x20U)
+          column = 0;
+        if(value & 0x40U)
+          column = (column + 1) % 10;
+
+        if((U32(value) ^ U32(prevSWCHA)) & 0x40U)
+          myCompuMate->cassetteD6Toggled(mySystem->cycles());
+      }
+    }
+    mySystem->m6532().poke(address, value);
+  }
+  return myBankChanged;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 CartridgeCM::column() const
+{
+  return myCompuMate ? myCompuMate->column() : 0;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeCM::bank(uInt16 bank, uInt16)
+{
+  if(hotspotsLocked()) return false;
+
+  // Remember what bank we're in
+  // Constrain to a valid bank so a corrupt bank value (e.g. from a
+  // tampered save state) can never offset myImage[] out of bounds
+  myBankOffset = (U32(bank) % romBankCount()) << 12U;
+
+  // Although this scheme contains four 4K ROM banks and one 2K RAM bank,
+  // it's easier to think of things in terms of 2K slices, as follows:
+  //
+  // The lower 2K of cart address space always points to the lower 2K of the
+  // current ROM bank
+  // The upper 2K of cart address space can point to either the 2K of RAM or
+  // the upper 2K of the current ROM bank
+
+  System::PageAccess access(this, System::PageAccessType::READ);
+
+  // Lower 2K (always ROM)
+  for(uInt16 addr = 0x1000; addr < 0x1800; addr += System::PAGE_SIZE)
+  {
+    const uInt16 offset = myBankOffset + (addr & 0x0FFFU);
+    access.directPeekBase  = &myImage[offset];
+    access.romAccessBase   = &myRomAccessBase[offset];
+    access.romPeekCounter  = &myRomAccessCounter[offset];
+    access.romPokeCounter  = &myRomAccessCounter[offset + myAccessSize];
+    mySystem->setPageAccess(addr, access);
+  }
+
+  // Upper 2K (RAM or ROM)
+  for(uInt16 addr = 0x1800; addr < 0x2000; addr += System::PAGE_SIZE)
+  {
+    access.type = System::PageAccessType::READWRITE;
+
+    if(mySWCHA & 0x10U)
+    {
+      const uInt16 offset = myBankOffset + (addr & 0x0FFFU);
+      access.directPeekBase  = &myImage[offset];
+      access.romAccessBase   = &myRomAccessBase[offset];
+      access.romPeekCounter  = &myRomAccessCounter[offset];
+      access.romPokeCounter  = &myRomAccessCounter[offset + myAccessSize];
+    }
+    else
+    {
+      const uInt16 ramOffset = addr & 0x7FFU;
+      const uInt16 offset    = myBankOffset + ramOffset;
+      access.directPeekBase  = &myRAM[ramOffset];
+      access.romAccessBase   = &myRomAccessBase[offset];
+      access.romPeekCounter  = &myRomAccessCounter[offset];
+      access.romPokeCounter  = &myRomAccessCounter[offset + myAccessSize];
+    }
+
+    access.directPokeBase = ((mySWCHA & 0x30U) == 0x20)
+      ? &myRAM[addr & 0x7FFU]
+      : nullptr;
+
+    mySystem->setPageAccess(addr, access);
+  }
+
+  return myBankChanged = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt16 CartridgeCM::getBank(uInt16) const
+{
+  return myBankOffset >> 12U;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt16 CartridgeCM::romBankCount() const
+{
+  // We report 4 banks (of ROM), even though RAM can overlap the upper 2K
+  // of cart address space at some times
+  // However, this RAM isn't enabled in the normal way that bankswitching
+  // works, so it is ignored here
+  return 4;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeCM::patch(uInt16 address, uInt8 value)
+{
+  if((mySWCHA & 0x30U) == 0x20)
+    myRAM[address & 0x7FFU] = value;
+  else
+    myImage[myBankOffset + address] = value;
+
+  return myBankChanged = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ByteSpan CartridgeCM::getImage() const
+{
+  return myImage;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeCM::save(Serializer& out) const
+{
+  try
+  {
+    out.putShort(myBankOffset);
+    out.putByte(mySWCHA);
+    out.putByte(myCompuMate ? myCompuMate->column() : 0);
+    out.putByteArray(myRAM);
+  }
+  catch(...)
+  {
+    cerr << "ERROR: CartridgeCM::save\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeCM::load(Serializer& in)
+{
+  try
+  {
+    myBankOffset = in.getShort();
+    mySWCHA = in.getByte();
+    const uInt8 column = in.getByte();
+    if(myCompuMate) myCompuMate->column() = column;
+    in.getByteArray(myRAM);
+  }
+  catch(...)
+  {
+    cerr << "ERROR: CartridgeCM::load\n";
+    return false;
+  }
+
+  // Remember what bank we were in
+  bank(myBankOffset >> 12U);
+
+  return true;
+}

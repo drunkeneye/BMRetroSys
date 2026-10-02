@@ -1,0 +1,317 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#ifndef PLAYFIELD_HXX
+#define PLAYFIELD_HXX
+
+class TIA;
+
+#include "bspf.hxx"
+#include "TIAConstants.hxx"
+#include "Serializable.hxx"
+
+/**
+  TIA playfield object. Unlike the sprites, the playfield has no counter:
+  the visible pattern is a 20-bit register myPattern derived from PF0/PF1/
+  PF2 (the bit-shuffle for the PF1 nibbles is hand-coded in pf1()). The
+  playfield clock is 1/4 of the color clock, so tick() bails on x%4 != 0
+  and otherwise indexes the pattern by (x >> 2) over the left half, then
+  either mirrors or repeats it across the right half depending on the
+  CTRLPF reflect bit. The reflect flag is only sampled at x = 0 or x = 79
+  so a CTRLPF write mid-line behaves correctly.
+
+  Color is split left/right: in normal mode both halves use COLUPF; in
+  score mode the left half uses COLUP0 and the right half COLUP1. The
+  optional score-glitch quirk (myScoreHaste) shifts the boundary one
+  pixel earlier to reproduce the matchie-Pesco behavior.
+
+  @author  Christian Speckner (DirtyHairy)
+*/
+class Playfield : public Serializable
+{
+  public:
+    /**
+      The collision mask is injected at construction
+     */
+    explicit Playfield(CollisionMask collisionMask);
+    ~Playfield() override = default;
+
+  public:
+
+    /**
+      Set the TIA instance
+     */
+    void setTIA(TIA* tia) { myTIA = tia; }
+
+    /**
+      Reset to initial state.
+     */
+    void reset();
+
+    /**
+      PF0 write.
+     */
+    void pf0(uInt8 value);
+
+    /**
+      PF1 write.
+     */
+    void pf1(uInt8 value);
+
+    /**
+      PF2 write.
+     */
+    void pf2(uInt8 value);
+
+    /**
+      CTRLPF write.
+     */
+    void ctrlpf(uInt8 value);
+
+    /**
+      Enable / disable PF display (debugging only, not used during normal emulation).
+     */
+    void toggleEnabled(bool enabled);
+
+    /**
+      Enable / disable PF collisions (debugging only, not used during normal emulation).
+     */
+    void toggleCollisions(bool enabled);
+
+    /**
+      Set color PF.
+     */
+    void setColor(uInt8 color);
+
+    /**
+      Set color P0.
+    */
+    void setColorP0(uInt8 color);
+
+    /**
+      Set color P1.
+    */
+    void setColorP1(uInt8 color);
+
+    /**
+      Set score mode color glitch.
+    */
+    void setScoreGlitch(bool enable);
+
+    /**
+      Set the color used in "debug colors" mode.
+     */
+    void setDebugColor(uInt8 color);
+
+    /**
+      Enable "debug colors" mode.
+     */
+    void enableDebugColors(bool enabled);
+
+    /**
+      Update internal state to use the color loss palette.
+     */
+    void applyColorLoss();
+
+    /**
+      Notify playfield of line change,
+     */
+    void nextLine();
+
+    /**
+      Is the playfield visible? This is determined by looking at bit 15
+      of the collision mask.
+     */
+    bool isOn() const { return Bitmask::Enum{collision}.any_of(CollisionMask::VISIBLE); }
+
+    /**
+      Get the current color.
+     */
+    uInt8 getColor() const;
+
+    /**
+      Serializable methods (see that class for more information).
+    */
+    bool save(Serializer& out) const override;
+    bool load(Serializer& in) override;
+
+    /**
+      Tick one color clock. Inline for performance (implementation below).
+     */
+    FORCE_INLINE void tick(uInt32 x);
+
+  public:
+
+    /**
+      16 bit Collision mask. Each sprite is represented by a single bit in the mask
+      (1 = active, 0 = inactive). All other bits are always 1. The highest bit is
+      abused to store visibility (as the actual collision bit will always be zero
+      if collisions are disabled).
+     */
+    CollisionMask collision{CollisionMask::NONE};
+
+  private:
+
+    /**
+      Playfield color mode.
+     */
+    enum class ColorMode: uInt8 {normal, score};
+
+  private:
+
+    /**
+      Recalculate playfield color based on COLUPF, debug colors, color loss, etc.
+     */
+    void applyColors();
+
+    /**
+      Recalculate the playfield pattern from PF0, PF1 and PF2.
+     */
+    void updatePattern();
+
+  private:
+
+    /**
+      Collision mask values for active / inactive states. Disabling collisions
+      will change those.
+     */
+    CollisionMask myCollisionMaskDisabled{CollisionMask::NONE};
+    CollisionMask myCollisionMaskEnabled{CollisionMask::ALL};
+
+    /**
+      Enable / disable PF (debugging).
+     */
+    bool myIsSuppressed{false};
+
+    /**
+      Left / right PF colors. Derifed from P0 / P1 color, COLUPF and playfield mode.
+     */
+    uInt8 myColorLeft{0};
+    uInt8 myColorRight{0};
+
+    /**
+      P0 / P1 colors
+     */
+    uInt8 myColorP0{0};
+    uInt8 myColorP1{0};
+
+    /**
+      COLUPF and debug colors
+     */
+    uInt8 myObjectColor{0}, myDebugColor{0};
+
+    /**
+      Debug colors enabled?
+     */
+    bool myDebugEnabled{false};
+
+    /**
+     * Playfield color mode.
+     */
+    ColorMode myColorMode{ColorMode::normal};
+
+    /**
+     * Score mode color glitch.
+     */
+    bool myScoreGlitch{false};
+
+    /**
+     * Score mode color switch haste.
+     */
+    uInt8 myScoreHaste{0};
+
+    /**
+      Pattern derifed from PF0, PF1, PF2
+     */
+    uInt32 myPattern{0};
+
+    /**
+      "Effective pattern". Will be 0 if playfield is disabled (debug), otherwise the same as myPattern.
+     */
+    uInt32 myEffectivePattern{0};
+
+    /**
+      Reflected mode on / off.
+     */
+    bool myReflected{false};
+
+    /**
+     * Are we currently drawing the reflected PF?
+     */
+    bool myRefp{false};
+
+    /**
+      PF registers.
+    */
+    uInt8 myPf0{0};
+    uInt8 myPf1{0};
+    uInt8 myPf2{0};
+
+    /**
+      The current scanline position (0 .. 159).
+     */
+    uInt32 myX{0};
+
+    /**
+      TIA instance. Required for flushing the line cache.
+     */
+    TIA* myTIA{nullptr};
+
+  private:
+    Playfield() = delete;
+    Playfield(const Playfield&) = delete;
+    Playfield(Playfield&&) = delete;
+    Playfield& operator=(const Playfield&) = delete;
+    Playfield& operator=(Playfield&&) = delete;
+};
+
+// ############################################################################
+// Implementation
+// ############################################################################
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Playfield::tick(uInt32 x)
+{
+  myX = x;
+
+  // Reflected flag is updated only at x = 0 or x = 79
+  if (myX == TIAConstants::H_PIXEL / 2-1 || myX == 0) [[unlikely]] myRefp = myReflected;
+
+  if (x & 0x03U) [[likely]] return;
+
+  uInt32 currentPixel;  // NOLINT(cppcoreguidelines-init-variables)
+
+  if (myEffectivePattern == 0) {
+      currentPixel = 0;
+  } else if (x < TIAConstants::H_PIXEL / 2 - 1) {
+      currentPixel = myEffectivePattern & (1U << (x >> 2U));
+  } else if (myRefp) {
+      // x is normally < 160, giving x >> 2 <= 39, but RSYNC strobed at the
+      // last color clock(s) of a scanline can briefly push it further (see
+      // TIA::applyRsync()'s negative myHctrDelta); 39 - (x >> 2) would
+      // underflow and shift by an out-of-range amount, so treat that as no
+      // pixel rather than reaching into undefined behavior
+      const uInt32 col = x >> 2U;
+      currentPixel = (col <= 39) ? (myEffectivePattern & (1U << (39U - col))) : 0;
+  } else {
+      currentPixel = myEffectivePattern & (1U << ((x >> 2U) - 20U));
+  }
+
+  collision = currentPixel ? myCollisionMaskEnabled : myCollisionMaskDisabled;
+}
+
+#endif  // PLAYFIELD_HXX

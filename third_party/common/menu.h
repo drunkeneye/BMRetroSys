@@ -234,4 +234,16 @@ const char *menu_default_disk_image(void);
 int menu_default_disk_drive(void);
 int menu_default_disk_prepare_volume(void);
 
+// Screenshots always land on the SD card under screenshots/<kernel>.
+// bmx_screenshot_mkdir creates the folder chain; bmx_screenshot_path
+// formats SD:/screenshots/<kernel>/shotNN.bmp.
+void bmx_screenshot_mkdir(const char *kernel);
+void bmx_screenshot_path(char *out, size_t out_size, const char *kernel,
+                         int n);
+
+// Wipe this machine's extracted-archive (.zcache) caches on all volumes.
+// Called at boot; DOS also calls it on every guest reboot so a
+// re-autostart extracts fresh after mounts died with the old session.
+void zip_wipe_machine_caches(void);
+
 #endif

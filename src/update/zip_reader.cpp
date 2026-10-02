@@ -414,6 +414,7 @@ ZipReader::ZipReader()
     memset(validated_inventory_binding_, 0,
            sizeof(validated_inventory_binding_));
     first_failure_path_[0] = '\0';
+    first_failure_flags_ = 0U;
 }
 
 void ZipReader::SetLenientExtraFields(bool lenient)
@@ -441,6 +442,11 @@ const char *ZipReader::FirstFailurePath() const
     return first_failure_path_;
 }
 
+uint16_t ZipReader::FirstFailureFlags() const
+{
+    return first_failure_flags_;
+}
+
 // Records a sanitized copy of the offending raw name for diagnostics.
 static void NoteFailurePath(char *destination, const uint8_t *raw,
                             size_t raw_size)
@@ -454,8 +460,149 @@ static void NoteFailurePath(char *destination, const uint8_t *raw,
     destination[n] = '\0';
 }
 
+// kCp850Fold[b - 0x80]: legacy DOS filename byte -> FAT-stable ASCII (""
+// = not foldable; symbols/box-drawing stay rejected as before).
+// DOS-era archivers store non-ASCII names without the UTF-8 flag in the
+// local DOS codepage (CP437, or CP850 for e.g. Brazilian packs where 0xC6
+// is ã). Folding letters with diacritics to their base letter keeps such
+// packs browsable; anything folded still goes through the normal ASCII
+// FAT validation plus duplicate/case-collision checks downstream, so a
+// bad fold can only fail closed, never produce an unsafe path.
+// Generated from CP850 + NFKD-strip with an explicit ae/ss/oe/th/eth table.
+static const char *const kCp850Fold[128] = {
+    "C", // 0x80 U+00C7 Ç -> C
+    "u", // 0x81 U+00FC ü -> u
+    "e", // 0x82 U+00E9 é -> e
+    "a", // 0x83 U+00E2 â -> a
+    "a", // 0x84 U+00E4 ä -> a
+    "a", // 0x85 U+00E0 à -> a
+    "a", // 0x86 U+00E5 å -> a
+    "c", // 0x87 U+00E7 ç -> c
+    "e", // 0x88 U+00EA ê -> e
+    "e", // 0x89 U+00EB ë -> e
+    "e", // 0x8A U+00E8 è -> e
+    "i", // 0x8B U+00EF ï -> i
+    "i", // 0x8C U+00EE î -> i
+    "i", // 0x8D U+00EC ì -> i
+    "A", // 0x8E U+00C4 Ä -> A
+    "A", // 0x8F U+00C5 Å -> A
+    "E", // 0x90 U+00C9 É -> E
+    "ae", // 0x91 U+00E6 æ -> ae
+    "AE", // 0x92 U+00C6 Æ -> AE
+    "o", // 0x93 U+00F4 ô -> o
+    "o", // 0x94 U+00F6 ö -> o
+    "o", // 0x95 U+00F2 ò -> o
+    "u", // 0x96 U+00FB û -> u
+    "u", // 0x97 U+00F9 ù -> u
+    "y", // 0x98 U+00FF ÿ -> y
+    "O", // 0x99 U+00D6 Ö -> O
+    "U", // 0x9A U+00DC Ü -> U
+    "o", // 0x9B U+00F8 ø -> o
+    "", // 0x9C (unmapped)
+    "O", // 0x9D U+00D8 Ø -> O
+    "x", // 0x9E U+00D7 × -> x
+    "f", // 0x9F U+0192 ƒ -> f
+    "a", // 0xA0 U+00E1 á -> a
+    "i", // 0xA1 U+00ED í -> i
+    "o", // 0xA2 U+00F3 ó -> o
+    "u", // 0xA3 U+00FA ú -> u
+    "n", // 0xA4 U+00F1 ñ -> n
+    "N", // 0xA5 U+00D1 Ñ -> N
+    "a", // 0xA6 U+00AA ª -> a
+    "o", // 0xA7 U+00BA º -> o
+    "", // 0xA8 (unmapped)
+    "", // 0xA9 (unmapped)
+    "", // 0xAA (unmapped)
+    "", // 0xAB (unmapped)
+    "", // 0xAC (unmapped)
+    "", // 0xAD (unmapped)
+    "", // 0xAE (unmapped)
+    "", // 0xAF (unmapped)
+    "", // 0xB0 (unmapped)
+    "", // 0xB1 (unmapped)
+    "", // 0xB2 (unmapped)
+    "", // 0xB3 (unmapped)
+    "", // 0xB4 (unmapped)
+    "A", // 0xB5 U+00C1 Á -> A
+    "A", // 0xB6 U+00C2 Â -> A
+    "A", // 0xB7 U+00C0 À -> A
+    "", // 0xB8 (unmapped)
+    "", // 0xB9 (unmapped)
+    "", // 0xBA (unmapped)
+    "", // 0xBB (unmapped)
+    "", // 0xBC (unmapped)
+    "", // 0xBD (unmapped)
+    "", // 0xBE (unmapped)
+    "", // 0xBF (unmapped)
+    "", // 0xC0 (unmapped)
+    "", // 0xC1 (unmapped)
+    "", // 0xC2 (unmapped)
+    "", // 0xC3 (unmapped)
+    "", // 0xC4 (unmapped)
+    "", // 0xC5 (unmapped)
+    "a", // 0xC6 U+00E3 ã -> a
+    "A", // 0xC7 U+00C3 Ã -> A
+    "", // 0xC8 (unmapped)
+    "", // 0xC9 (unmapped)
+    "", // 0xCA (unmapped)
+    "", // 0xCB (unmapped)
+    "", // 0xCC (unmapped)
+    "", // 0xCD (unmapped)
+    "", // 0xCE (unmapped)
+    "", // 0xCF (unmapped)
+    "d", // 0xD0 U+00F0 ð -> d
+    "D", // 0xD1 U+00D0 Ð -> D
+    "E", // 0xD2 U+00CA Ê -> E
+    "E", // 0xD3 U+00CB Ë -> E
+    "E", // 0xD4 U+00C8 È -> E
+    "i", // 0xD5 U+0131 ı -> i
+    "I", // 0xD6 U+00CD Í -> I
+    "I", // 0xD7 U+00CE Î -> I
+    "I", // 0xD8 U+00CF Ï -> I
+    "", // 0xD9 (unmapped)
+    "", // 0xDA (unmapped)
+    "", // 0xDB (unmapped)
+    "", // 0xDC (unmapped)
+    "", // 0xDD (unmapped)
+    "I", // 0xDE U+00CC Ì -> I
+    "", // 0xDF (unmapped)
+    "O", // 0xE0 U+00D3 Ó -> O
+    "ss", // 0xE1 U+00DF ß -> ss
+    "O", // 0xE2 U+00D4 Ô -> O
+    "O", // 0xE3 U+00D2 Ò -> O
+    "o", // 0xE4 U+00F5 õ -> o
+    "O", // 0xE5 U+00D5 Õ -> O
+    "u", // 0xE6 U+00B5 µ -> u
+    "t", // 0xE7 U+00FE þ -> t
+    "T", // 0xE8 U+00DE Þ -> T
+    "U", // 0xE9 U+00DA Ú -> U
+    "U", // 0xEA U+00DB Û -> U
+    "U", // 0xEB U+00D9 Ù -> U
+    "y", // 0xEC U+00FD ý -> y
+    "Y", // 0xED U+00DD Ý -> Y
+    "", // 0xEE (unmapped: spacing mark)
+    "", // 0xEF (unmapped: spacing mark)
+    "", // 0xF0 (unmapped)
+    "", // 0xF1 (unmapped)
+    "", // 0xF2 (unmapped: spacing mark)
+    "", // 0xF3 (unmapped)
+    "", // 0xF4 (unmapped)
+    "", // 0xF5 (unmapped)
+    "", // 0xF6 (unmapped)
+    "", // 0xF7 (unmapped: spacing mark)
+    "", // 0xF8 (unmapped)
+    "", // 0xF9 (unmapped: spacing mark)
+    "", // 0xFA (unmapped)
+    "1", // 0xFB U+00B9 ¹ -> 1
+    "3", // 0xFC U+00B3 ³ -> 3
+    "2", // 0xFD U+00B2 ² -> 2
+    "", // 0xFE (unmapped)
+    "", // 0xFF (unmapped: spacing mark)
+};
+
 // Lenient browsing: fold '\\' to '/', drop leading separators, and strip
 // spaces (leading) plus spaces/dots (trailing) per component — what
+// Windows/FAT do with such names. Output never exceeds input length.
 // Windows/FAT do with such names. Output never exceeds input length.
 // Returns false when nothing usable remains ('.', '..', all-trimmed).
 // Collisions created hereby ('A/B' vs 'A /B') are caught by the normal
@@ -501,6 +648,360 @@ static bool NormalizeLenientPath(uint8_t *dst, size_t dstsz,
     return true;
 }
 
+// Fold one non-ASCII code point (UTF-8-flagged names) to 1-2 ASCII bytes
+// (letters only). Returns bytes written; 0 = not representable (the caller
+// keeps the original bytes so validation reports the historical status).
+// Generated from NFKD-strip with an explicit ae/ss/oe/th/eth table.
+static size_t FoldCodePointToAscii(uint32_t cp, char out[2]) {
+    switch (cp) {
+    case 0x00AAU: out[0] = 'a'; return 1U;
+    case 0x00B5U: out[0] = 'u'; return 1U;
+    case 0x00BAU: out[0] = 'o'; return 1U;
+    case 0x00C0U: out[0] = 'A'; return 1U;
+    case 0x00C1U: out[0] = 'A'; return 1U;
+    case 0x00C2U: out[0] = 'A'; return 1U;
+    case 0x00C3U: out[0] = 'A'; return 1U;
+    case 0x00C4U: out[0] = 'A'; return 1U;
+    case 0x00C5U: out[0] = 'A'; return 1U;
+    case 0x00C6U: out[0] = 'A'; out[1] = 'E'; return 2U;
+    case 0x00C7U: out[0] = 'C'; return 1U;
+    case 0x00C8U: out[0] = 'E'; return 1U;
+    case 0x00C9U: out[0] = 'E'; return 1U;
+    case 0x00CAU: out[0] = 'E'; return 1U;
+    case 0x00CBU: out[0] = 'E'; return 1U;
+    case 0x00CCU: out[0] = 'I'; return 1U;
+    case 0x00CDU: out[0] = 'I'; return 1U;
+    case 0x00CEU: out[0] = 'I'; return 1U;
+    case 0x00CFU: out[0] = 'I'; return 1U;
+    case 0x00D0U: out[0] = 'D'; return 1U;
+    case 0x00D1U: out[0] = 'N'; return 1U;
+    case 0x00D2U: out[0] = 'O'; return 1U;
+    case 0x00D3U: out[0] = 'O'; return 1U;
+    case 0x00D4U: out[0] = 'O'; return 1U;
+    case 0x00D5U: out[0] = 'O'; return 1U;
+    case 0x00D6U: out[0] = 'O'; return 1U;
+    case 0x00D7U: out[0] = 'x'; return 1U;
+    case 0x00D8U: out[0] = 'O'; return 1U;
+    case 0x00D9U: out[0] = 'U'; return 1U;
+    case 0x00DAU: out[0] = 'U'; return 1U;
+    case 0x00DBU: out[0] = 'U'; return 1U;
+    case 0x00DCU: out[0] = 'U'; return 1U;
+    case 0x00DDU: out[0] = 'Y'; return 1U;
+    case 0x00DEU: out[0] = 'T'; return 1U;
+    case 0x00DFU: out[0] = 's'; out[1] = 's'; return 2U;
+    case 0x00E0U: out[0] = 'a'; return 1U;
+    case 0x00E1U: out[0] = 'a'; return 1U;
+    case 0x00E2U: out[0] = 'a'; return 1U;
+    case 0x00E3U: out[0] = 'a'; return 1U;
+    case 0x00E4U: out[0] = 'a'; return 1U;
+    case 0x00E5U: out[0] = 'a'; return 1U;
+    case 0x00E6U: out[0] = 'a'; out[1] = 'e'; return 2U;
+    case 0x00E7U: out[0] = 'c'; return 1U;
+    case 0x00E8U: out[0] = 'e'; return 1U;
+    case 0x00E9U: out[0] = 'e'; return 1U;
+    case 0x00EAU: out[0] = 'e'; return 1U;
+    case 0x00EBU: out[0] = 'e'; return 1U;
+    case 0x00ECU: out[0] = 'i'; return 1U;
+    case 0x00EDU: out[0] = 'i'; return 1U;
+    case 0x00EEU: out[0] = 'i'; return 1U;
+    case 0x00EFU: out[0] = 'i'; return 1U;
+    case 0x00F0U: out[0] = 'd'; return 1U;
+    case 0x00F1U: out[0] = 'n'; return 1U;
+    case 0x00F2U: out[0] = 'o'; return 1U;
+    case 0x00F3U: out[0] = 'o'; return 1U;
+    case 0x00F4U: out[0] = 'o'; return 1U;
+    case 0x00F5U: out[0] = 'o'; return 1U;
+    case 0x00F6U: out[0] = 'o'; return 1U;
+    case 0x00F8U: out[0] = 'o'; return 1U;
+    case 0x00F9U: out[0] = 'u'; return 1U;
+    case 0x00FAU: out[0] = 'u'; return 1U;
+    case 0x00FBU: out[0] = 'u'; return 1U;
+    case 0x00FCU: out[0] = 'u'; return 1U;
+    case 0x00FDU: out[0] = 'y'; return 1U;
+    case 0x00FEU: out[0] = 't'; return 1U;
+    case 0x00FFU: out[0] = 'y'; return 1U;
+    case 0x0100U: out[0] = 'A'; return 1U;
+    case 0x0101U: out[0] = 'a'; return 1U;
+    case 0x0102U: out[0] = 'A'; return 1U;
+    case 0x0103U: out[0] = 'a'; return 1U;
+    case 0x0104U: out[0] = 'A'; return 1U;
+    case 0x0105U: out[0] = 'a'; return 1U;
+    case 0x0106U: out[0] = 'C'; return 1U;
+    case 0x0107U: out[0] = 'c'; return 1U;
+    case 0x0108U: out[0] = 'C'; return 1U;
+    case 0x0109U: out[0] = 'c'; return 1U;
+    case 0x010AU: out[0] = 'C'; return 1U;
+    case 0x010BU: out[0] = 'c'; return 1U;
+    case 0x010CU: out[0] = 'C'; return 1U;
+    case 0x010DU: out[0] = 'c'; return 1U;
+    case 0x010EU: out[0] = 'D'; return 1U;
+    case 0x010FU: out[0] = 'd'; return 1U;
+    case 0x0112U: out[0] = 'E'; return 1U;
+    case 0x0113U: out[0] = 'e'; return 1U;
+    case 0x0114U: out[0] = 'E'; return 1U;
+    case 0x0115U: out[0] = 'e'; return 1U;
+    case 0x0116U: out[0] = 'E'; return 1U;
+    case 0x0117U: out[0] = 'e'; return 1U;
+    case 0x0118U: out[0] = 'E'; return 1U;
+    case 0x0119U: out[0] = 'e'; return 1U;
+    case 0x011AU: out[0] = 'E'; return 1U;
+    case 0x011BU: out[0] = 'e'; return 1U;
+    case 0x011CU: out[0] = 'G'; return 1U;
+    case 0x011DU: out[0] = 'g'; return 1U;
+    case 0x011EU: out[0] = 'G'; return 1U;
+    case 0x011FU: out[0] = 'g'; return 1U;
+    case 0x0120U: out[0] = 'G'; return 1U;
+    case 0x0121U: out[0] = 'g'; return 1U;
+    case 0x0122U: out[0] = 'G'; return 1U;
+    case 0x0123U: out[0] = 'g'; return 1U;
+    case 0x0124U: out[0] = 'H'; return 1U;
+    case 0x0125U: out[0] = 'h'; return 1U;
+    case 0x0128U: out[0] = 'I'; return 1U;
+    case 0x0129U: out[0] = 'i'; return 1U;
+    case 0x012AU: out[0] = 'I'; return 1U;
+    case 0x012BU: out[0] = 'i'; return 1U;
+    case 0x012CU: out[0] = 'I'; return 1U;
+    case 0x012DU: out[0] = 'i'; return 1U;
+    case 0x012EU: out[0] = 'I'; return 1U;
+    case 0x012FU: out[0] = 'i'; return 1U;
+    case 0x0130U: out[0] = 'I'; return 1U;
+    case 0x0131U: out[0] = 'i'; return 1U;
+    case 0x0134U: out[0] = 'J'; return 1U;
+    case 0x0135U: out[0] = 'j'; return 1U;
+    case 0x0136U: out[0] = 'K'; return 1U;
+    case 0x0137U: out[0] = 'k'; return 1U;
+    case 0x0139U: out[0] = 'L'; return 1U;
+    case 0x013AU: out[0] = 'l'; return 1U;
+    case 0x013BU: out[0] = 'L'; return 1U;
+    case 0x013CU: out[0] = 'l'; return 1U;
+    case 0x013DU: out[0] = 'L'; return 1U;
+    case 0x013EU: out[0] = 'l'; return 1U;
+    case 0x0141U: out[0] = 'L'; return 1U;
+    case 0x0142U: out[0] = 'l'; return 1U;
+    case 0x0143U: out[0] = 'N'; return 1U;
+    case 0x0144U: out[0] = 'n'; return 1U;
+    case 0x0145U: out[0] = 'N'; return 1U;
+    case 0x0146U: out[0] = 'n'; return 1U;
+    case 0x0147U: out[0] = 'N'; return 1U;
+    case 0x0148U: out[0] = 'n'; return 1U;
+    case 0x014CU: out[0] = 'O'; return 1U;
+    case 0x014DU: out[0] = 'o'; return 1U;
+    case 0x014EU: out[0] = 'O'; return 1U;
+    case 0x014FU: out[0] = 'o'; return 1U;
+    case 0x0150U: out[0] = 'O'; return 1U;
+    case 0x0151U: out[0] = 'o'; return 1U;
+    case 0x0152U: out[0] = 'O'; out[1] = 'E'; return 2U;
+    case 0x0153U: out[0] = 'o'; out[1] = 'e'; return 2U;
+    case 0x0154U: out[0] = 'R'; return 1U;
+    case 0x0155U: out[0] = 'r'; return 1U;
+    case 0x0156U: out[0] = 'R'; return 1U;
+    case 0x0157U: out[0] = 'r'; return 1U;
+    case 0x0158U: out[0] = 'R'; return 1U;
+    case 0x0159U: out[0] = 'r'; return 1U;
+    case 0x015AU: out[0] = 'S'; return 1U;
+    case 0x015BU: out[0] = 's'; return 1U;
+    case 0x015CU: out[0] = 'S'; return 1U;
+    case 0x015DU: out[0] = 's'; return 1U;
+    case 0x015EU: out[0] = 'S'; return 1U;
+    case 0x015FU: out[0] = 's'; return 1U;
+    case 0x0160U: out[0] = 'S'; return 1U;
+    case 0x0161U: out[0] = 's'; return 1U;
+    case 0x0162U: out[0] = 'T'; return 1U;
+    case 0x0163U: out[0] = 't'; return 1U;
+    case 0x0164U: out[0] = 'T'; return 1U;
+    case 0x0165U: out[0] = 't'; return 1U;
+    case 0x0168U: out[0] = 'U'; return 1U;
+    case 0x0169U: out[0] = 'u'; return 1U;
+    case 0x016AU: out[0] = 'U'; return 1U;
+    case 0x016BU: out[0] = 'u'; return 1U;
+    case 0x016CU: out[0] = 'U'; return 1U;
+    case 0x016DU: out[0] = 'u'; return 1U;
+    case 0x016EU: out[0] = 'U'; return 1U;
+    case 0x016FU: out[0] = 'u'; return 1U;
+    case 0x0170U: out[0] = 'U'; return 1U;
+    case 0x0171U: out[0] = 'u'; return 1U;
+    case 0x0172U: out[0] = 'U'; return 1U;
+    case 0x0173U: out[0] = 'u'; return 1U;
+    case 0x0174U: out[0] = 'W'; return 1U;
+    case 0x0175U: out[0] = 'w'; return 1U;
+    case 0x0176U: out[0] = 'Y'; return 1U;
+    case 0x0177U: out[0] = 'y'; return 1U;
+    case 0x0178U: out[0] = 'Y'; return 1U;
+    case 0x0179U: out[0] = 'Z'; return 1U;
+    case 0x017AU: out[0] = 'z'; return 1U;
+    case 0x017BU: out[0] = 'Z'; return 1U;
+    case 0x017CU: out[0] = 'z'; return 1U;
+    case 0x017DU: out[0] = 'Z'; return 1U;
+    case 0x017EU: out[0] = 'z'; return 1U;
+    case 0x017FU: out[0] = 's'; return 1U;
+    case 0x0192U: out[0] = 'f'; return 1U;
+    case 0x01A0U: out[0] = 'O'; return 1U;
+    case 0x01A1U: out[0] = 'o'; return 1U;
+    case 0x01AFU: out[0] = 'U'; return 1U;
+    case 0x01B0U: out[0] = 'u'; return 1U;
+    case 0x01CDU: out[0] = 'A'; return 1U;
+    case 0x01CEU: out[0] = 'a'; return 1U;
+    case 0x01CFU: out[0] = 'I'; return 1U;
+    case 0x01D0U: out[0] = 'i'; return 1U;
+    case 0x01D1U: out[0] = 'O'; return 1U;
+    case 0x01D2U: out[0] = 'o'; return 1U;
+    case 0x01D3U: out[0] = 'U'; return 1U;
+    case 0x01D4U: out[0] = 'u'; return 1U;
+    case 0x01D5U: out[0] = 'U'; return 1U;
+    case 0x01D6U: out[0] = 'u'; return 1U;
+    case 0x01D7U: out[0] = 'U'; return 1U;
+    case 0x01D8U: out[0] = 'u'; return 1U;
+    case 0x01D9U: out[0] = 'U'; return 1U;
+    case 0x01DAU: out[0] = 'u'; return 1U;
+    case 0x01DBU: out[0] = 'U'; return 1U;
+    case 0x01DCU: out[0] = 'u'; return 1U;
+    case 0x01DEU: out[0] = 'A'; return 1U;
+    case 0x01DFU: out[0] = 'a'; return 1U;
+    case 0x01E0U: out[0] = 'A'; return 1U;
+    case 0x01E1U: out[0] = 'a'; return 1U;
+    case 0x01E6U: out[0] = 'G'; return 1U;
+    case 0x01E7U: out[0] = 'g'; return 1U;
+    case 0x01E8U: out[0] = 'K'; return 1U;
+    case 0x01E9U: out[0] = 'k'; return 1U;
+    case 0x01EAU: out[0] = 'O'; return 1U;
+    case 0x01EBU: out[0] = 'o'; return 1U;
+    case 0x01ECU: out[0] = 'O'; return 1U;
+    case 0x01EDU: out[0] = 'o'; return 1U;
+    case 0x01F0U: out[0] = 'j'; return 1U;
+    case 0x01F4U: out[0] = 'G'; return 1U;
+    case 0x01F5U: out[0] = 'g'; return 1U;
+    case 0x01F8U: out[0] = 'N'; return 1U;
+    case 0x01F9U: out[0] = 'n'; return 1U;
+    case 0x01FAU: out[0] = 'A'; return 1U;
+    case 0x01FBU: out[0] = 'a'; return 1U;
+    case 0x0200U: out[0] = 'A'; return 1U;
+    case 0x0201U: out[0] = 'a'; return 1U;
+    case 0x0202U: out[0] = 'A'; return 1U;
+    case 0x0203U: out[0] = 'a'; return 1U;
+    case 0x0204U: out[0] = 'E'; return 1U;
+    case 0x0205U: out[0] = 'e'; return 1U;
+    case 0x0206U: out[0] = 'E'; return 1U;
+    case 0x0207U: out[0] = 'e'; return 1U;
+    case 0x0208U: out[0] = 'I'; return 1U;
+    case 0x0209U: out[0] = 'i'; return 1U;
+    case 0x020AU: out[0] = 'I'; return 1U;
+    case 0x020BU: out[0] = 'i'; return 1U;
+    case 0x020CU: out[0] = 'O'; return 1U;
+    case 0x020DU: out[0] = 'o'; return 1U;
+    case 0x020EU: out[0] = 'O'; return 1U;
+    case 0x020FU: out[0] = 'o'; return 1U;
+    case 0x0210U: out[0] = 'R'; return 1U;
+    case 0x0211U: out[0] = 'r'; return 1U;
+    case 0x0212U: out[0] = 'R'; return 1U;
+    case 0x0213U: out[0] = 'r'; return 1U;
+    case 0x0214U: out[0] = 'U'; return 1U;
+    case 0x0215U: out[0] = 'u'; return 1U;
+    case 0x0216U: out[0] = 'U'; return 1U;
+    case 0x0217U: out[0] = 'u'; return 1U;
+    case 0x0218U: out[0] = 'S'; return 1U;
+    case 0x0219U: out[0] = 's'; return 1U;
+    case 0x021AU: out[0] = 'T'; return 1U;
+    case 0x021BU: out[0] = 't'; return 1U;
+    case 0x021EU: out[0] = 'H'; return 1U;
+    case 0x021FU: out[0] = 'h'; return 1U;
+    case 0x0226U: out[0] = 'A'; return 1U;
+    case 0x0227U: out[0] = 'a'; return 1U;
+    case 0x0228U: out[0] = 'E'; return 1U;
+    case 0x0229U: out[0] = 'e'; return 1U;
+    case 0x022AU: out[0] = 'O'; return 1U;
+    case 0x022BU: out[0] = 'o'; return 1U;
+    case 0x022CU: out[0] = 'O'; return 1U;
+    case 0x022DU: out[0] = 'o'; return 1U;
+    case 0x022EU: out[0] = 'O'; return 1U;
+    case 0x022FU: out[0] = 'o'; return 1U;
+    case 0x0230U: out[0] = 'O'; return 1U;
+    case 0x0231U: out[0] = 'o'; return 1U;
+    case 0x0232U: out[0] = 'Y'; return 1U;
+    case 0x0233U: out[0] = 'y'; return 1U;
+    case 0x03BCU: out[0] = 'u'; return 1U;
+    default: return 0U;
+    }
+}
+
+// Lenient browsing: fold a normalized name with legacy (CP850) or UTF-8
+// diacritics down to FAT-stable ASCII letters (see kCp850Fold and
+// FoldCodePointToAscii). Pure-ASCII input passes through unchanged.
+// Returns false when a byte/sequence is not foldable; the caller then
+// validates the original bytes so the reported status is unchanged.
+// Output is NUL-terminated and never longer than dstsz - 1.
+static bool FoldLenientNameToAscii(uint8_t *dst, size_t dstsz,
+                                   const uint8_t *raw, size_t rawsz,
+                                   bool utf8_flag)
+{
+    if (dst == 0 || dstsz == 0U || raw == 0 || rawsz == 0U) return false;
+    size_t w = 0U;
+    if (!utf8_flag) {
+        for (size_t r = 0U; r < rawsz; ++r) {
+            const uint8_t b = raw[r];
+            if (b < 0x80U) {
+                if (w + 1U >= dstsz) return false;
+                dst[w++] = b;
+                continue;
+            }
+            const char *fold = kCp850Fold[b - 0x80U];
+            const size_t n = strlen(fold);
+            if (n == 0U || w + n >= dstsz) return false;
+            memcpy(dst + w, fold, n);
+            w += n;
+        }
+    } else {
+        size_t r = 0U;
+        while (r < rawsz) {
+            const uint8_t first = raw[r];
+            if (first < 0x80U) {
+                if (w + 1U >= dstsz) return false;
+                dst[w++] = first;
+                ++r;
+                continue;
+            }
+            // Strict UTF-8, mirroring IsValidUtf8: C2-DF/E0-EF/F0-F4
+            // starters, 80-BF continuations, no overlongs, surrogates or
+            // code points past U+10FFFF.
+            uint32_t cp = 0U;
+            size_t cont = 0U;
+            if (first >= 0xc2U && first <= 0xdfU) {
+                cp = static_cast<uint32_t>(first & 0x1fU);
+                cont = 1U;
+            } else if (first >= 0xe0U && first <= 0xefU) {
+                cp = static_cast<uint32_t>(first & 0x0fU);
+                cont = 2U;
+            } else if (first >= 0xf0U && first <= 0xf4U) {
+                cp = static_cast<uint32_t>(first & 0x07U);
+                cont = 3U;
+            } else {
+                return false;
+            }
+            if (cont > rawsz - r - 1U) return false;
+            for (size_t i = 0U; i < cont; ++i) {
+                const uint8_t next = raw[r + 1U + i];
+                if ((next & 0xc0U) != 0x80U) return false;
+                cp = (cp << 6U) | static_cast<uint32_t>(next & 0x3fU);
+            }
+            if ((cont == 1U && cp < 0x80U) ||
+                (cont == 2U && cp < 0x800U) ||
+                (cont == 3U && cp < 0x10000U) ||
+                (cp >= 0xd800U && cp <= 0xdfffU) ||
+                cp > 0x10ffffU) {
+                return false;
+            }
+            char out[2];
+            const size_t n = FoldCodePointToAscii(cp, out);
+            if (n == 0U || w + n >= dstsz) return false;
+            memcpy(dst + w, out, n);
+            w += n;
+            r += 1U + cont;
+        }
+    }
+    if (w >= dstsz) return false;
+    dst[w] = '\0';
+    return true;
+}
+
 void ZipReader::SetWorkspace(ZipWorkspace *workspace)
 {
     workspace_ = workspace;
@@ -522,6 +1023,8 @@ ZipStatus ZipReader::Open(SeekableZipSource *source,
     open_ = false;
     source_ = 0;
     entries_ = 0;
+    first_failure_path_[0] = '\0';
+    first_failure_flags_ = 0U;
     memset(&inventory_, 0, sizeof(inventory_));
     if (source == 0 || entries == 0 || limits.maximum_entries == 0U ||
         limits.maximum_entries > kZipMaximumEntries ||
@@ -655,6 +1158,9 @@ ZipStatus ZipReader::Open(SeekableZipSource *source,
             allowed |= kLenientFlagMask;
         }
         if ((flags & static_cast<uint16_t>(~allowed)) != 0U) {
+            // The raw name is not read yet at this point (bounds checks
+            // come first), so only the offending bits are recorded.
+            first_failure_flags_ = flags;
             return ZipStatus::UnsupportedFlags;
         }
         if (method != static_cast<uint16_t>(ZipCompression::Store) &&
@@ -713,6 +1219,7 @@ ZipStatus ZipReader::Open(SeekableZipSource *source,
         size_t check_length = name_length;
         bool check_is_dir = name_is_directory;
         uint8_t norm_name[kZipMaximumPathBytes + 1U];
+        uint8_t fold_name[kZipMaximumPathBytes + 1U];
         if (lenient_paths_ && name_length <= kZipMaximumPathBytes) {
             if (!NormalizeLenientPath(norm_name, sizeof(norm_name),
                                       raw_name, name_length, &check_is_dir)) {
@@ -722,6 +1229,17 @@ ZipStatus ZipReader::Open(SeekableZipSource *source,
             }
             check_name = norm_name;
             check_length = strlen((const char *)norm_name);
+            // Fold legacy/CP850 or UTF-8 diacritics to ASCII so real-world
+            // ROM packs stay browsable. The folded form goes through the
+            // normal FAT validation plus duplicate/case checks below; when
+            // a name is not foldable the original bytes are validated, so
+            // the reported status is unchanged.
+            if (FoldLenientNameToAscii(fold_name, sizeof(fold_name),
+                                       norm_name, check_length,
+                                       (flags & kUtf8Flag) != 0U)) {
+                check_name = fold_name;
+                check_length = strlen((const char *)fold_name);
+            }
         }
         const ZipStatus path_status = ValidateAndCopyPath(
             check_name, check_length, flags, check_is_dir,
@@ -864,6 +1382,7 @@ ZipStatus ZipReader::Open(SeekableZipSource *source,
         const uint8_t *cmp_name = local_name;
         size_t cmp_length = local_name_length;
         uint8_t norm_local[kZipMaximumPathBytes + 1U];
+        uint8_t fold_local[kZipMaximumPathBytes + 1U];
         if (lenient_paths_ && local_name_length <= kZipMaximumPathBytes) {
             bool dummy = false;
             if (!NormalizeLenientPath(norm_local, sizeof(norm_local),
@@ -873,6 +1392,14 @@ ZipStatus ZipReader::Open(SeekableZipSource *source,
             }
             cmp_name = norm_local;
             cmp_length = strlen((const char *)norm_local);
+            // Same diacritic fold as the central directory above, so local
+            // headers compare against the folded entry path.
+            if (FoldLenientNameToAscii(fold_local, sizeof(fold_local),
+                                       norm_local, cmp_length,
+                                       (entry.flags & kUtf8Flag) != 0U)) {
+                cmp_name = fold_local;
+                cmp_length = strlen((const char *)fold_local);
+            }
         }
         const size_t expected_name_length =
             strlen(entry.path) + (entry.is_directory ? 1U : 0U);

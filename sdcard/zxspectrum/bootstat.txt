@@ -1,0 +1,5 @@
+ZX Spectrum boot ROM status.
+
+The ZXSPECTRUM kernel carries its ROMs on the SD card (/roms/ZXSPECTRUM,
+staged from the vendored ZEsarUX tree) and verifies sizes at boot, so no
+fast-stat hints are needed here.

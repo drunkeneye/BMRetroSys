@@ -155,7 +155,9 @@ BuildInfoStatus ParseBuildInfo(ByteView encoded, JsonToken *tokens,
         return BuildInfoStatus::FieldsInvalid;
     }
     build_info->updater_abi = static_cast<uint32_t>(abi);
-    if (strcmp(board, "pi4") == 0) {
+    if (strcmp(board, "pi3") == 0) {
+        build_info->board = BoardFamily::Pi3;
+    } else if (strcmp(board, "pi4") == 0) {
         build_info->board = BoardFamily::Pi4Pi400;
     } else if (strcmp(board, "pi5") == 0) {
         build_info->board = BoardFamily::Pi5Pi500;

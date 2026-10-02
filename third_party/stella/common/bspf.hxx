@@ -1,0 +1,588 @@
+//============================================================================
+//
+//  BBBBB    SSSS   PPPPP   FFFFFF
+//  BB  BB  SS  SS  PP  PP  FF
+//  BB  BB  SS      PP  PP  FF
+//  BBBBB    SSSS   PPPPP   FFFF    --  "Brad's Simple Portability Framework"
+//  BB  BB      SS  PP      FF
+//  BB  BB  SS  SS  PP      FF
+//  BBBBB    SSSS   PP      FF
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#ifndef BSPF_HXX
+#define BSPF_HXX
+
+/**
+  This file defines various basic data types and preprocessor variables
+  that need to be defined for different operating systems.
+
+  @author Bradford W. Mott and Stephen Anthony
+*/
+
+#include <cstdint>
+#include <cstddef>
+// Types for 8/16/32/64-bit signed and unsigned integers
+using Int8   = int8_t;
+using uInt8  = uint8_t;
+using Int16  = int16_t;
+using uInt16 = uint16_t;
+using Int32  = int32_t;
+using uInt32 = uint32_t;
+using Int64  = int64_t;
+using uInt64 = uint64_t;
+
+// Short-named stand-ins for static_cast<...> to the types above, for the common
+// case of narrowing/re-signing a value.
+template<typename T> constexpr Int8   I8 (T x) { return static_cast<Int8>(x);   }
+template<typename T> constexpr uInt8  U8 (T x) { return static_cast<uInt8>(x);  }
+template<typename T> constexpr Int16  I16(T x) { return static_cast<Int16>(x);  }
+template<typename T> constexpr uInt16 U16(T x) { return static_cast<uInt16>(x); }
+template<typename T> constexpr Int32  I32(T x) { return static_cast<Int32>(x);  }
+template<typename T> constexpr uInt32 U32(T x) { return static_cast<uInt32>(x); }
+template<typename T> constexpr Int64  I64(T x) { return static_cast<Int64>(x);  }
+template<typename T> constexpr uInt64 U64(T x) { return static_cast<uInt64>(x); }
+
+// Same idea, for bool/float/double/size_t.
+template<typename T> constexpr float  FLT(T x) { return static_cast<float>(x);  }
+template<typename T> constexpr double DBL(T x) { return static_cast<double>(x); }
+template<typename T> constexpr size_t SZT(T x) { return static_cast<size_t>(x); }
+
+// The following code should provide access to the standard C++ objects and
+// types: cout, cerr, string, ostream, istream, etc.
+#include <array>
+#include <algorithm>
+#include <bit>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <format>
+#include <charconv>
+#include <sstream>
+#include <ctime>
+#include <numbers>
+#include <ranges>
+#include <span>
+#include <utility>
+#include <vector>
+
+using std::cin;
+using std::cout;
+using std::cerr;
+// Android NDK 26 libc++ lacks ostringstream::view() (C++20 P0408R7)
+#if defined(__ANDROID__) && !defined(__cpp_lib_sstream_from_string_view)
+class ostringstream : public std::ostringstream {
+public:
+  using std::ostringstream::ostringstream;
+  std::string view() const { return str(); }
+};
+class stringstream : public std::stringstream {
+public:
+  using std::stringstream::stringstream;
+  std::string view() const { return str(); }
+};
+#endif
+
+// Frequently used data types
+using std::string;
+using std::string_view;
+using std::unique_ptr;
+using std::shared_ptr;
+using std::vector;
+
+// Common array types
+using BoolArray  = std::vector<bool>;
+using ByteArray  = std::vector<uInt8>;
+using ShortArray = std::vector<uInt16>;
+using IntArray   = std::vector<Int32>;
+using uIntArray  = std::vector<uInt32>;
+using StringList = std::vector<std::string>;
+
+// Common const span types
+template<typename T>
+using SpanOf = std::span<const T>;
+
+using BoolSpan  = SpanOf<bool>;
+using ByteSpan  = SpanOf<uInt8>;
+using ShortSpan = SpanOf<uInt16>;
+using IntSpan   = SpanOf<uInt32>;
+using sIntSpan  = SpanOf<Int32>;
+using FloatSpan = SpanOf<float>;
+
+// Common mutable span types
+template<typename T>
+using MSpanOf = std::span<T>;
+
+using BoolMSpan  = MSpanOf<bool>;
+using ByteMSpan  = MSpanOf<uInt8>;
+using ShortMSpan = MSpanOf<uInt16>;
+using IntMSpan   = MSpanOf<uInt32>;
+using sIntMSpan  = MSpanOf<Int32>;
+using FloatMSpan = MSpanOf<float>;
+
+// We use KB a lot; let's make a literal for it
+[[nodiscard]] constexpr size_t operator ""_KB(unsigned long long size)
+{
+  return SZT(size * 1024);
+}
+
+// Output contents of a vector
+template<typename T>
+std::ostream& operator<< (std::ostream& out, const std::vector<T>& v) {
+  for(const auto& elem: v)
+    out << elem << " ";
+  return out;
+}
+
+// Output contents of a map
+template<typename T>
+concept MapLike = requires(T m) {
+  typename T::key_type;
+  typename T::mapped_type;
+};
+template<MapLike M>
+std::ostream& operator<<(std::ostream& out, const M& m) {
+  for(const auto& [key, value]: m)
+    out << key << ": " << value << '\n';
+  return out;
+}
+
+// This is so we can return empty string references without creating temporaries
+inline const string& EmptyString() { static const string empty; return empty; }
+
+// This is defined by some systems, but Stella has other uses for it
+#undef PAGE_SIZE
+#undef PAGE_MASK
+
+// Adaptable refresh is currently not available on MacOS
+// In the future, this may expand to other systems
+#ifndef BSPF_MACOS
+  #define ADAPTABLE_REFRESH_SUPPORT
+#endif
+
+namespace BSPF
+{
+  constexpr float  PI_f = std::numbers::pi_v<float>;
+  constexpr double PI_d = std::numbers::pi_v<double>;
+  constexpr double ln10 = std::numbers::ln10;
+  constexpr double ln2  = std::numbers::ln2;
+
+  // CPU architecture type
+  // This isn't complete yet, but takes care of all the major platforms
+  #if defined(__i386__) || defined(_M_IX86)
+    constexpr string_view ARCH = "i386";
+  #elif defined(__x86_64__) || defined(_WIN64)
+    constexpr string_view ARCH = "x86_64";
+  #elif defined(__powerpc__) || defined(__ppc__)
+    constexpr string_view ARCH = "ppc";
+  #elif defined(__arm__) || defined(__thumb__)
+    constexpr string_view ARCH = "arm32";
+  #elifdef __aarch64__
+    constexpr string_view ARCH = "arm64";
+  #else
+    constexpr string_view ARCH = "NOARCH";
+  #endif
+
+  #if defined(BSPF_WINDOWS) || defined(__WIN32__)
+    #define FORCE_INLINE __forceinline
+  #else
+    #define FORCE_INLINE inline __attribute__((always_inline))
+  #endif
+
+  // Portable restrict hint — tells the compiler that pointer arguments
+  // do not alias each other, enabling auto-vectorization of hot loops.
+  #if defined(__clang__) || defined(__GNUC__)
+    #define FORCE_RESTRICT __restrict__
+  #elifdef _MSC_VER
+    #define FORCE_RESTRICT __restrict
+  #else
+    /* no support for restricted pointers */
+    #define FORCE_RESTRICT
+  #endif
+
+  // Get next power of two greater than or equal to the given value
+  constexpr size_t nextPowerOfTwo(size_t size) {
+    return std::bit_ceil(size);
+  }
+
+  // Get next multiple of the given value
+  // Note that this only works when multiple is a power of two
+  constexpr size_t nextMultipleOf(size_t size, size_t multiple) {
+    return (size + multiple - 1) & ~(multiple - 1);
+  }
+
+  // Make 2D-arrays using std::array less verbose
+  template<typename T, size_t ROW, size_t COL>
+  using array2D = std::array<std::array<T, COL>, ROW>;
+
+  // Combines 'max' and 'min', and clamps value to the upper/lower value
+  // if it is outside the specified range
+  template<typename T> constexpr T clamp(T val, T lower, T upper)
+  {
+    return std::clamp<T>(val, lower, upper);
+  }
+  template<typename T> constexpr void clamp(T& val, T lower, T upper, T setVal)
+  {
+    if(val < lower || val > upper)  val = setVal;
+  }
+  template<typename T> constexpr T clampw(T val, T lower, T upper)
+  {
+    return (val < lower) ? upper : (val > upper) ? lower : val;
+  }
+
+  // Test whether a container contains the given value
+  // NOTE: Only needed until std::vector gets a contains() method
+  template<typename Container>
+  bool contains(const Container& c, typename Container::const_reference elem) {
+    return std::ranges::find(c, elem) != c.end();
+  }
+
+  // Convert character to upper/lower case (ASCII only)
+  constexpr char toUpperAscii(char c) {
+    return (c >= 'a' && c <= 'z') ? (c - 'a' + 'A') : c;
+  }
+  constexpr char toLowerAscii(char c) {
+    return (c >= 'A' && c <= 'Z') ? (c - 'A' + 'a') : c;
+  }
+  // Test whether a character is upper/ower case (ASCII only)
+  constexpr bool isUpperAscii(char c) { return c >= 'A' && c <= 'Z'; }
+  constexpr bool isLowerAscii(char c) { return c >= 'a' && c <= 'z'; }
+
+  // Convert string to given case
+  constexpr string& toUpperCase(string& s)
+  {
+    std::ranges::transform(s, s.begin(), [](char c){ return toUpperAscii(c); });
+    return s;
+  }
+  constexpr string& toLowerCase(string& s)
+  {
+    std::ranges::transform(s, s.begin(), [](char c){ return toLowerAscii(c); });
+    return s;
+  }
+
+  // Convert string to integer, using default value on any error
+  template<int BASE = 10>
+  constexpr int stoi(string_view s, int defaultValue = 0)
+  {
+    // Skip leading spaces safely
+    const auto pos = s.find_first_not_of(' ');
+    if(pos == string_view::npos)
+      return defaultValue;
+    s.remove_prefix(pos);
+
+    int i{};
+    const auto result = std::from_chars(s.data(), s.data() + s.size(), i, BASE);
+    return (result.ec == std::errc()) ? i : defaultValue;
+  }
+
+  // Compare two strings (case insensitive)
+  // Return negative, zero, positive result for <,==,> respectively
+  constexpr int compareIgnoreCase(string_view s1, string_view s2)
+  {
+    // Only compare up to the length of the shorter string
+    const auto maxsize = std::min(s1.size(), s2.size());
+    for(auto i = 0UZ; i < maxsize; ++i)
+    {
+      const char c1 = toUpperAscii(s1[i]);
+      const char c2 = toUpperAscii(s2[i]);
+      if(c1 != c2)
+        return c1 - c2;
+    }
+    return (s1.size() < s2.size()) ? -1 : (s1.size() > s2.size() ? 1 : 0);
+  }
+
+  // Test whether two strings are equal (case insensitive)
+  constexpr bool equalsIgnoreCase(string_view s1, string_view s2)
+  {
+    return s1.size() == s2.size() && compareIgnoreCase(s1, s2) == 0;
+  }
+
+  // Test whether the first string starts with the second one (case insensitive)
+  constexpr bool startsWithIgnoreCase(string_view s1, string_view s2)
+  {
+    return s1.size() >= s2.size() &&
+           compareIgnoreCase(s1.substr(0, s2.size()), s2) == 0;
+  }
+
+  // Test whether the first string ends with the second one (case insensitive)
+  constexpr bool endsWithIgnoreCase(string_view s1, string_view s2)
+  {
+    return s1.size() >= s2.size() &&
+           compareIgnoreCase(s1.substr(s1.size() - s2.size()), s2) == 0;
+  }
+
+  // Find location (if any) of the second string within the first,
+  // starting from 'startpos' in the first string
+  // Returns the absolute position in s1, or string_view::npos if not found.
+  constexpr size_t findIgnoreCase(string_view s1, string_view s2,
+                                  size_t startpos = 0)
+  {
+    if(startpos > s1.size()) return string_view::npos;
+    const auto sub = s1.substr(startpos);
+    const auto found = std::ranges::search(sub, s2,
+            [&](char ch1, char ch2) {
+              return toUpperAscii(ch1) == toUpperAscii(ch2);
+            }
+    );
+    return (found.empty() && !s2.empty()) ? string_view::npos
+                                          : startpos + (found.begin() - sub.begin());
+  }
+
+  // Test whether the first string contains the second one (case insensitive)
+  constexpr bool containsIgnoreCase(string_view s1, string_view s2)
+  {
+    return findIgnoreCase(s1, s2) != string_view::npos;
+  }
+
+  // Test whether the first string matches the second one (case insensitive)
+  // - the first character must match
+  // - the following characters must appear in the order of the first string
+  constexpr bool matchesIgnoreCase(string_view s1, string_view s2)
+  {
+    if(s2.empty()) return true;
+    if(s1.empty()) return false;
+
+    // First character must match
+    if(toUpperAscii(s1[0]) != toUpperAscii(s2[0]))
+      return false;
+
+    // Remaining characters must appear in order
+    auto pos = 1UZ;
+    for(auto j = 1UZ; j < s2.size(); ++j)
+    {
+      const char target = toUpperAscii(s2[j]);
+      while(pos < s1.size() && toUpperAscii(s1[pos]) != target)
+        ++pos;
+      if(pos == s1.size())
+        return false;
+      ++pos;
+    }
+    return true;
+  }
+
+  // Test whether the first string matches the second one
+  //  (case sensitive for upper case characters in second string, except first one)
+  // - the first character must match
+  // - the following characters must appear in the order of the first string
+  constexpr bool matchesCamelCase(string_view s1, string_view s2)
+  {
+    if(s1.empty() || s2.empty()) return false;
+
+    // Skip leading '_' for both strings if both start with it
+    const auto ofs = (s1[0] == '_' && s2[0] == '_') ? 1UZ : 0UZ;
+
+    // First character must match (case insensitive)
+    if(toUpperAscii(s1[ofs]) != toUpperAscii(s2[ofs]))
+      return false;
+
+    auto pos = 1UZ + ofs;  // current search position in s1 (absolute)
+
+    for(auto j = 1UZ + ofs; j < s2.size(); ++j)
+    {
+      const char c2 = s2[j];
+
+      if(isUpperAscii(c2))
+      {
+        // Scan forward in s1; fail if we encounter an uppercase char
+        // before finding c2 (which must be an exact case match)
+        while(pos < s1.size() && s1[pos] != c2)
+        {
+          if(isUpperAscii(s1[pos]))
+            return false;  // skipped an uppercase — not a valid match
+          ++pos;
+        }
+        if(pos == s1.size())
+          return false;
+      }
+      else
+      {
+        // Case-insensitive scan for a lowercase pattern char;
+        // uppercase chars in s1 are not a barrier here
+        const char c2u = toUpperAscii(c2);
+        while(pos < s1.size() && toUpperAscii(s1[pos]) != c2u)
+          ++pos;
+        if(pos == s1.size())
+          return false;
+      }
+      ++pos;
+    }
+    return true;
+  }
+
+  // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  // Search if string contains pattern including wildcard '*'
+  // and '?' as joker.
+  // @param str      The searched string
+  // @param pattern  The pattern to search for
+  // @return  True if pattern was found.
+  constexpr bool matchWithWildcards(string_view str, string_view pattern)
+  {
+    // A pattern without an explicit leading '*' matches anywhere in str,
+    // and one without a trailing '*' need not consume str's tail.
+    // "PAL" behaves like "*PAL*", and internal '*'/'?' are matched as
+    // you'd expect; "1984*Atari" filters for Atari games from 1984.
+    const bool needLeading  = pattern.empty() || pattern.front() != '*';
+    const bool needTrailing = pattern.empty() || pattern.back()  != '*';
+    string effectivePat;
+    if(needLeading || needTrailing)
+    {
+      effectivePat.reserve(pattern.size() + needLeading + needTrailing);
+      if(needLeading)  effectivePat += '*';
+      effectivePat += pattern;
+      if(needTrailing) effectivePat += '*';
+      pattern = effectivePat;
+    }
+
+    auto si = 0UZ;        // current position in str
+    auto pi = 0UZ;        // current position in pattern
+    auto starPi = string_view::npos;  // position of last '*' in pattern
+    auto starSi = 0UZ;    // position in str when last '*' was matched
+
+    while(si < str.length())
+    {
+      if(pi < pattern.length() &&
+        (pattern[pi] == '?' || pattern[pi] == str[si]))
+      {
+        // Direct match or joker: advance both
+        ++si;
+        ++pi;
+      }
+      else if(pi < pattern.length() && pattern[pi] == '*')
+      {
+        // '*' matches zero characters for now; remember position to backtrack
+        starPi = pi++;
+        starSi = si;
+      }
+      else if(starPi != string_view::npos)
+      {
+        // Mismatch, but we have a previous '*' to backtrack to;
+        // let it consume one more character from str
+        pi = starPi + 1;
+        si = ++starSi;
+      }
+      else
+        return false;  // Mismatch with no '*' to backtrack to
+    }
+
+    // Consume any remaining '*' in pattern (they match empty string)
+    while(pi < pattern.length() && pattern[pi] == '*')
+      ++pi;
+
+    return pi == pattern.length();
+  }
+
+  // Modify 'str', replacing all occurrences of 'from' with 'to'
+  constexpr void replaceAll(string& str, string_view from, string_view to)
+  {
+    if(from.empty()) return;
+    auto start_pos = 0UZ;
+    while((start_pos = str.find(from, start_pos)) != string_view::npos)
+    {
+      str.replace(start_pos, from.length(), to);
+      start_pos += to.length(); // In case 'to' contains 'from',
+                                // like replacing 'x' with 'yx'
+    }
+  }
+
+  // Trim leading and trailing whitespace from a string
+  constexpr string_view trim(string_view str)
+  {
+    constexpr string_view WS = " \t\r\n";
+    const auto first = str.find_first_not_of(WS);
+    if(first == string_view::npos)
+      return {};
+
+    const auto last = str.find_last_not_of(WS);
+    return str.substr(first, last - first + 1);
+  }
+
+  // Make an untrusted string safe to use as a single filename component by
+  // neutralizing path separators.  This prevents directory-traversal when a
+  // name from a (potentially shared/imported) properties entry is concatenated
+  // into a save/snapshot path.  Both '/' and '\' are replaced regardless of
+  // platform so the result can't escape its intended directory.
+  constexpr string sanitizeFilename(string_view name)
+  {
+    string result{name};
+    std::ranges::replace(result, '/', '_');
+    std::ranges::replace(result, '\\', '_');
+    return result;
+  }
+
+  // C++11 way to get local time
+  // Equivalent to the C-style localtime() function, but is thread-safe
+  inline std::tm localTime()
+  {
+    const auto currtime = std::time(nullptr);
+    std::tm tm_snapshot{};
+  #if (defined BSPF_WINDOWS || defined __WIN32__) && (!defined __GNUG__ || defined __MINGW32__)
+    std::ignore = localtime_s(&tm_snapshot, &currtime);
+  #else
+    std::ignore = localtime_r(&currtime, &tm_snapshot);
+  #endif
+    return tm_snapshot;
+  }
+
+  constexpr bool isWhiteSpace(const char c)
+  {
+    constexpr string_view spaces{" ,.;:+-*&/\\'"};
+    return spaces.contains(c);
+  }
+
+  // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  // Search the image for the specified byte signature
+  //
+  // @param image      The ROM image as a span
+  // @param signature  The byte sequence to search for as a span
+  // @param minhits    The minimum number of times a signature is to be found
+  // @return  True if the signature was found at least 'minhits' times, else false
+  constexpr bool searchForBytes(ByteSpan image, ByteSpan signature,
+                                size_t minhits = 1)
+  {
+    const auto sigsize = signature.size();
+    if(image.size() < sigsize)
+      return false;
+
+    auto count = 0UZ;
+    for(auto i = 0UZ; i <= image.size() - sigsize; ++i)
+    {
+      auto j = 0UZ;
+      for(j = 0; j < sigsize; ++j)
+      {
+        if(image[i + j] != signature[j])
+          break;
+      }
+      if(j == sigsize)
+      {
+        if(++count == minhits)
+          break;
+        i += sigsize - 1;  // -1 because the loop will increment i
+      }
+    }
+    return (count == minhits);
+  }
+
+  // Used with various map objects to accept string_view
+  struct StringHash {
+    using is_transparent = void;
+    size_t operator()(string_view sv) const noexcept {
+      return std::hash<string_view>{}(sv);
+    }
+  };
+
+  // Transparent comparator for case-insensitive std::map/std::set
+  struct CaseInsensitiveLess {
+    using is_transparent = void;
+    bool operator()(string_view a, string_view b) const {
+      return compareIgnoreCase(a, b) < 0;
+    }
+  };
+}  // namespace BSPF
+
+#endif  // BSPF_HXX

@@ -16,6 +16,20 @@
 namespace bmx {
 namespace atarist {
 
+extern "C" int atarist_volume_pct = 100;
+
+void sound_set_volume(int pct) {
+  if (pct < 0) {
+    pct = 0;
+  }
+  if (pct > 300) {
+    pct = 300;
+  }
+  atarist_volume_pct = pct;
+}
+
+int sound_get_volume(void) { return atarist_volume_pct; }
+
 void sound_init(void) {
   debug_log("sound_init: YM2149 + STE DMA via AudioMixBuffer drain");
 }

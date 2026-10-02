@@ -71,7 +71,7 @@ static const struct pi_kernel_spec pi_kernel_specs[] = {
     {0, "kernel.img"},
     {1, "kernel.img"},
     {2, "kernel7.img"},
-    {3, "kernel8-32.img"},
+    {3, "kernel7l.img"},
     {4, BMX_PI4_KERNEL_BASE},
     {5, "kernel_2712.img"},
 };
@@ -311,6 +311,18 @@ static BMC64MachineClass parse_machine_class(const char *name) {
   }
   if (strcasecmp(name, "AMIGA") == 0) {
     return BMC64_MACHINE_CLASS_AMIGA;
+  }
+  if (strcasecmp(name, "ZXSPECTRUM") == 0) {
+    return BMC64_MACHINE_CLASS_ZXSPECTRUM;
+  }
+  if (strcasecmp(name, "CPC") == 0) {
+    return BMC64_MACHINE_CLASS_CPC;
+  }
+  if (strcasecmp(name, "MSX") == 0) {
+    return BMC64_MACHINE_CLASS_MSX;
+  }
+  if (strcasecmp(name, "A2600") == 0) {
+    return BMC64_MACHINE_CLASS_A2600;
   }
   return BMC64_MACHINE_CLASS_UNKNOWN;
 }
@@ -973,13 +985,13 @@ static const char *default_kernel_for_pi_model(int pi_model) {
 }
 
 static int model_uses_release_selector(int pi_model) {
-  return pi_model == 4 || pi_model == 5;
+  return pi_model == 3 || pi_model == 4 || pi_model == 5;
 }
 
 static int normal_machine_kernel_name(const char *name, size_t length) {
   static const char *const machines[] = {
       "c64", "c64sc", "scpu64", "c128", "vic20", "plus4", "pet", "atari800",
-      "dos", "atarist", "amiga",
+      "dos", "atarist", "amiga", "zxspectrum", "cpc", "msx", "a2600",
   };
   size_t i;
 
@@ -1100,6 +1112,14 @@ static const char *kernel_suffix_for_machine_class(
       return ".atarist";
     case BMC64_MACHINE_CLASS_AMIGA:
       return ".amiga";
+    case BMC64_MACHINE_CLASS_ZXSPECTRUM:
+      return ".zxspectrum";
+    case BMC64_MACHINE_CLASS_CPC:
+      return ".cpc";
+    case BMC64_MACHINE_CLASS_MSX:
+      return ".msx";
+    case BMC64_MACHINE_CLASS_A2600:
+      return ".a2600";
     default:
       return NULL;
   }
@@ -1384,16 +1404,17 @@ static int boot_plan_add_config_int(struct bmx_boot_plan *plan,
 static int overclock_value_valid(unsigned field, int value, int pi_model) {
   switch (field) {
     case BMX_OVERCLOCK_ARM_FREQ:
-      return pi_model == 4 ? value >= 600 && value <= 2400
-                           : pi_model == 5 && value >= 1500 && value <= 3200;
+      return pi_model == 3 ? value >= 600 && value <= 1400
+                           : pi_model == 4 ? value >= 600 && value <= 2400
+                                           : pi_model == 5 && value >= 1500 && value <= 3200;
     case BMX_OVERCLOCK_CORE_FREQ:
     case BMX_OVERCLOCK_V3D_FREQ:
-      return (pi_model == 4 || pi_model == 5) && value >= 100 && value <= 1200;
+      return (pi_model == 3 || pi_model == 4 || pi_model == 5) && value >= 100 && value <= 1200;
     case BMX_OVERCLOCK_VOLTAGE_DELTA:
-      return (pi_model == 4 || pi_model == 5) &&
+      return (pi_model == 3 || pi_model == 4 || pi_model == 5) &&
              value >= -100000 && value <= 100000;
     case BMX_OVERCLOCK_TEMP_LIMIT:
-      return (pi_model == 4 || pi_model == 5) && value >= 1 && value <= 85;
+      return (pi_model == 3 || pi_model == 4 || pi_model == 5) && value >= 1 && value <= 85;
     default:
       return 0;
   }

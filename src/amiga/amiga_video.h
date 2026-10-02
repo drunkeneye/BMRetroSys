@@ -19,6 +19,11 @@ void video_set_color_adjustments(int brightness, int contrast, int gamma,
 void video_get_color_adjustments(int *brightness, int *contrast, int *gamma,
                                  int *tint, int *saturation);
 
+// CRT monitor emulation (Color/B&W/Green/Amber): luma-driven phosphor
+// mapping applied to every presented pixel. Color is the identity.
+void video_set_monitor(int mode);
+int video_get_monitor(void);
+
 bool video_save_screenshot(const char *path);
 
 void video_present_stats(unsigned long *presents, unsigned long *ensure_us,

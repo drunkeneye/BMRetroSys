@@ -17,7 +17,7 @@ bool basic_preference_loaded(void);
 // Pushes settings-staged color values into Colours_setup (same source).
 void apply_staged_colors(void);
 
-// Rescans the staged ROM pool (/roms/atari800) (see scan_rom_pool); callable at runtime
+// Rescans the staged ROM pool (/roms/ATARI800) (see scan_rom_pool); callable at runtime
 // from the System ROMs menu. Returns true when it rebooted the machine.
 bool rescan_rom_pool(void);
 

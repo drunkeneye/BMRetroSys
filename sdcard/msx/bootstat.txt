@@ -1,0 +1,5 @@
+MSX boot ROM status.
+
+The MSX kernel carries a user-supplied ROM on the SD card (/roms/MSX, see
+ROMS.txt) and verifies size at boot, so no fast-stat hints are needed
+here.

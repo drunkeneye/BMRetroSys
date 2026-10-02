@@ -38,7 +38,7 @@
 #include <ff.h>
 
 #ifndef BMX_PI4_LEGACY_DISPLAY
-#define BMX_PI4_LEGACY_DISPLAY (RASPPI == 4 && AARCH == 32)
+#define BMX_PI4_LEGACY_DISPLAY (AARCH == 32 && (RASPPI == 4 || RASPPI == 3))
 #endif
 
 #if BMX_PI4_LEGACY_DISPLAY
@@ -65,6 +65,14 @@
 #include "atarist/atarist_emulator_core.h"
 #elif defined(RASPI_AMIGA)
 #include "amiga/amiga_emulator_core.h"
+#elif defined(RASPI_ZXSPECTRUM)
+#include "zxspectrum/zx_emulator_core.h"
+#elif defined(RASPI_CPC)
+#include "cpc/cpc_emulator_core.h"
+#elif defined(RASPI_MSX)
+#include "msx/msx_emulator_core.h"
+#elif defined(RASPI_A2600)
+#include "a2600/a2600_emulator_core.h"
 #else
 #include "viceemulatorcore.h"
 #endif
@@ -328,6 +336,14 @@ public:
 #elif defined(RASPI_AMIGA)
          new bmx::amiga::AmigaEmulatorCore(&mMemory,
                                            circle_cycles_per_second());
+#elif defined(RASPI_ZXSPECTRUM)
+         new ZXSpectrumEmulatorCore(&mMemory, circle_cycles_per_second());
+#elif defined(RASPI_CPC)
+         new CPCEmulatorCore(&mMemory, circle_cycles_per_second());
+#elif defined(RASPI_MSX)
+         new MSXEmulatorCore(&mMemory, circle_cycles_per_second());
+#elif defined(RASPI_A2600)
+         new A2600EmulatorCore(&mMemory, circle_cycles_per_second());
 #else
          new ViceEmulatorCore(&mMemory, circle_cycles_per_second());
 #endif

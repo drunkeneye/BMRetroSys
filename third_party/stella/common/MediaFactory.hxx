@@ -1,0 +1,197 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#ifndef MEDIA_FACTORY_HXX
+#define MEDIA_FACTORY_HXX
+
+#include "bspf.hxx"
+#ifdef SDL_SUPPORT
+  #include "SDL_lib.hxx"
+#endif
+
+#include "OSystem.hxx"
+#include "Settings.hxx"
+#include "SerialPort.hxx"
+#ifdef BSPF_UNIX
+  #include "SerialPortPOSIX.hxx"
+  #include "OSystemUNIX.hxx"
+#elifdef BSPF_WINDOWS
+  #include "SerialPortWINDOWS.hxx"
+  #include "OSystemWINDOWS.hxx"
+#elifdef BSPF_MACOS
+  #include "SerialPortPOSIX.hxx"
+  #include "OSystemMACOS.hxx"
+#elifdef __LIB_RETRO__
+  #include "OSystemLIBRETRO.hxx"
+#elifdef __BMX__
+  #include "a2600_stella_backend.h"
+#else
+  #error Unsupported platform!
+#endif
+
+#ifdef __LIB_RETRO__
+  #include "EventHandlerLIBRETRO.hxx"
+  #include "FBBackendLIBRETRO.hxx"
+#elifdef __BMX__
+  // Classes live in a2600_stella_backend.h (included above).
+#elifdef SDL_SUPPORT
+  #include "EventHandlerSDL.hxx"
+  #include "FBBackendSDL.hxx"
+#else
+  #error Unsupported backend!
+#endif
+
+#ifdef SOUND_SUPPORT
+  #ifdef __LIB_RETRO__
+    #include "SoundLIBRETRO.hxx"
+  #elifdef __BMX__
+    // SoundBMX lives in a2600_stella_backend.h (included above).
+  #elifdef SDL_SUPPORT
+    #include "SoundSDL.hxx"
+  #else
+    #include "SoundNull.hxx"
+  #endif
+#else
+  #include "SoundNull.hxx"
+#endif
+
+class AudioSettings;
+
+/**
+  This class deals with the different framebuffer/sound/event
+  implementations for the various ports of Stella, and always returns a
+  valid object based on the specific port and restrictions on that port.
+
+  @author  Stephen Anthony
+*/
+class MediaFactory
+{
+  public:
+    static unique_ptr<OSystem> createOSystem()
+    {
+    #ifdef BSPF_UNIX
+      return std::make_unique<OSystemUNIX>();
+    #elifdef BSPF_WINDOWS
+      return std::make_unique<OSystemWINDOWS>();
+    #elifdef BSPF_MACOS
+      return std::make_unique<OSystemMACOS>();
+    #elifdef __LIB_RETRO__
+      return std::make_unique<OSystemLIBRETRO>();
+    #elifdef __BMX__
+      return std::make_unique<bmx::a2600::OSystemBMX>();
+    #else
+      #error Unsupported platform for OSystem!
+    #endif
+    }
+
+    static unique_ptr<Settings> createSettings()
+    {
+      return std::make_unique<Settings>();
+    }
+
+    static unique_ptr<SerialPort> createSerialPort()
+    {
+    #ifdef BSPF_UNIX
+      return std::make_unique<SerialPortPOSIX>();
+    #elifdef BSPF_WINDOWS
+      return std::make_unique<SerialPortWINDOWS>();
+    #elifdef BSPF_MACOS
+      return std::make_unique<SerialPortPOSIX>();
+    #else
+      return std::make_unique<SerialPort>();
+    #endif
+    }
+
+    static unique_ptr<FBBackend> createVideoBackend(OSystem& osystem)
+    {
+    #ifdef __LIB_RETRO__
+      return std::make_unique<FBBackendLIBRETRO>(osystem);
+    #elifdef __BMX__
+      return std::make_unique<bmx::a2600::FBBackendBMX>(osystem);
+    #elifdef SDL_SUPPORT
+      return std::make_unique<FBBackendSDL>(osystem);
+    #else
+      #error Unsupported platform for FrameBuffer!
+    #endif
+    }
+
+    static unique_ptr<Sound> createAudio(OSystem& osystem, AudioSettings& audioSettings)
+    {
+    #ifdef SOUND_SUPPORT
+      #ifdef __LIB_RETRO__
+        return std::make_unique<SoundLIBRETRO>(osystem, audioSettings);
+      #elifdef __BMX__
+        return std::make_unique<bmx::a2600::SoundBMX>(osystem, audioSettings);
+      #elifdef SDL_SUPPORT
+        return std::make_unique<SoundSDL>(osystem, audioSettings);
+      #else
+        return std::make_unique<SoundNull>(osystem);
+      #endif
+    #else
+      return std::make_unique<SoundNull>(osystem);
+    #endif
+    }
+
+    static unique_ptr<EventHandler> createEventHandler(OSystem& osystem)
+    {
+    #ifdef __LIB_RETRO__
+      return std::make_unique<EventHandlerLIBRETRO>(osystem);
+    #elifdef __BMX__
+      return std::make_unique<bmx::a2600::EventHandlerBMX>(osystem);
+    #elifdef SDL_SUPPORT
+      return std::make_unique<EventHandlerSDL>(osystem);
+    #else
+      #error Unsupported platform for EventHandler!
+    #endif
+    }
+
+    static void cleanUp()
+    {
+    #ifdef SDL_SUPPORT
+      SDL_Quit();
+    #endif
+    }
+
+    static string backendName()
+    {
+    #ifdef SDL_SUPPORT
+      return SDLVersion();
+    #else
+      return "Custom backend";
+    #endif
+    }
+
+    static bool openURL(const string& url)
+    {
+    #ifdef SDL_SUPPORT
+      return SDLOpenURL(url);
+    #else
+      return false;
+    #endif
+    }
+
+  private:
+    // Following constructors and assignment operators not supported
+    MediaFactory() = delete;
+    ~MediaFactory() = delete;
+    MediaFactory(const MediaFactory&) = delete;
+    MediaFactory(MediaFactory&&) = delete;
+    MediaFactory& operator=(const MediaFactory&) = delete;
+    MediaFactory& operator=(MediaFactory&&) = delete;
+};
+
+#endif  // MEDIA_FACTORY_HXX

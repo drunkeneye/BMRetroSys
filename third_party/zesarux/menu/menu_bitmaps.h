@@ -1,0 +1,365 @@
+/*
+    ZEsarUX  ZX Second-Emulator And Released for UniX
+    Copyright (C) 2013 Cesar Hernandez Bano
+
+    This file is part of ZEsarUX.
+
+    ZEsarUX is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+*/
+
+#ifndef MENU_BITMAPS_H
+#define MENU_BITMAPS_H
+
+
+#define ZESARUX_ASCII_LOGO_ANCHO 26
+#define ZESARUX_ASCII_LOGO_ALTO 26
+extern char *zesarux_ascii_logo[];
+extern char **get_zesarux_ascii_logo(void);
+extern char **alter_zesarux_ascii_logo(char **p);
+extern char *zesarux_ascii_logo_whitebright[];
+extern char **get_zesarux_ascii_logo_whitebright(void);
+
+extern char *bitmap_button_ext_desktop_userdefined[];
+
+extern char *bitmap_button_ext_desktop_smartload[];
+extern char *bitmap_button_ext_desktop_snapshot[];
+extern char *bitmap_button_ext_desktop_machine[];
+extern char *bitmap_button_ext_desktop_set_machine[];
+extern char *bitmap_button_ext_desktop_set_machine_only_arrow[];
+extern char *bitmap_button_ext_desktop_audio[];
+extern char *bitmap_button_ext_desktop_display[];
+extern char *bitmap_button_ext_desktop_storage[];
+extern char *bitmap_button_ext_desktop_help[];
+extern char *bitmap_button_ext_desktop_debug[];
+extern char *bitmap_button_ext_desktop_network[];
+extern char *bitmap_button_ext_desktop_windows[];
+extern char *bitmap_button_ext_desktop_settings[];
+extern char *bitmap_button_ext_desktop_close_all_menus[];
+extern char *bitmap_button_ext_desktop_exit[];
+
+extern char *bitmap_button_ext_desktop_fullscreen[];
+extern char *bitmap_button_ext_desktop_waveform[];
+extern char *bitmap_button_ext_desktop_audioregisters[];
+extern char *bitmap_button_ext_desktop_audiosheet[];
+extern char *bitmap_button_ext_desktop_zxeyes[];
+extern char *bitmap_button_ext_desktop_watches[];
+extern char *bitmap_button_ext_desktop_view_basic[];
+extern char *bitmap_button_ext_desktop_view_basic_variables[];
+extern char *bitmap_button_ext_desktop_view_gosub_stack[];
+extern char *bitmap_button_ext_desktop_visualmem[];
+extern char *bitmap_button_ext_desktop_memorycheat[];
+extern char *bitmap_button_ext_desktop_mdvrawmap[];
+extern char *bitmap_button_ext_desktop_zxlife[];
+extern char *bitmap_button_ext_desktop_view_sensors[];
+extern char *bitmap_button_ext_desktop_visualfloppy[];
+extern char *bitmap_button_ext_desktop_audiopiano[];
+extern char *bitmap_button_ext_desktop_wavepiano[];
+extern char *bitmap_button_ext_desktop_aymixer[];
+extern char *bitmap_button_ext_desktop_ayplayer[];
+extern char *bitmap_button_ext_desktop_ayplayer_pause[];
+extern char *bitmap_button_ext_desktop_ayplayer_next_track[];
+extern char *bitmap_button_ext_desktop_ayplayer_next_file[];
+extern char *bitmap_button_ext_desktop_ayplayer_previous_track[];
+extern char *bitmap_button_ext_desktop_ayplayer_previous_file[];
+extern char *bitmap_button_ext_desktop_volume_increment[];
+extern char *bitmap_button_ext_desktop_volume_decrement[];
+extern char *bitmap_button_ext_desktop_volume_silence[];
+extern char *bitmap_button_ext_desktop_colour_palettes[];
+extern char *bitmap_button_ext_desktop_reset[];
+extern char *bitmap_button_ext_desktop_hardreset[];
+extern char *bitmap_button_ext_desktop_reloadmmc[];
+extern char *bitmap_button_ext_desktop_loadbinary[];
+extern char *bitmap_button_ext_desktop_savebinary[];
+extern char *bitmap_button_ext_desktop_snapinramrewind[];
+extern char *bitmap_button_ext_desktop_snapinramffw[];
+extern char *bitmap_button_ext_desktop_snapinramsave[];
+extern char *bitmap_button_ext_desktop_snapinrambrowse[];
+extern char *bitmap_button_ext_desktop_pause[];
+extern char *bitmap_button_ext_desktop_debugcpu[];
+extern char *bitmap_button_ext_desktop_debugdma[];
+extern char *bitmap_button_ext_desktop_breakpoints[];
+extern char *bitmap_button_ext_desktop_ioports[];
+extern char *bitmap_button_ext_desktop_geneneralsoundregisters[];
+extern char *bitmap_button_ext_desktop_nextdac[];
+extern char *bitmap_button_ext_desktop_cpustatistics[];
+extern char *bitmap_button_ext_desktop_corestatistics[];
+extern char *bitmap_button_ext_desktop_runninginfo[];
+extern char *bitmap_button_ext_desktop_debugcpu_view_adventure[];
+extern char *bitmap_button_ext_desktop_text_adventure_map[];
+extern char *bitmap_button_ext_desktop_hexeditor[];
+extern char *bitmap_button_ext_desktop_viewsprites[];
+extern char *bitmap_button_ext_desktop_tsconftbbluespritenav[];
+extern char *bitmap_button_ext_desktop_tsconftbbluetilenav[];
+extern char *bitmap_button_ext_desktop_shortcutshelper[];
+extern char *bitmap_button_ext_desktop_debugconsole[];
+extern char *bitmap_button_ext_desktop_fileutils[];
+extern char *bitmap_button_ext_desktop_pauseunpausetape[];
+extern char *bitmap_button_ext_desktop_reinserttape[];
+extern char *bitmap_button_ext_desktop_reinsertrealtape[];
+extern char *bitmap_button_ext_desktop_ocr[];
+extern char *bitmap_button_ext_desktop_switchborder[];
+extern char *bitmap_button_ext_desktop_switchfooter[];
+extern char *bitmap_button_ext_desktop_topspeed[];
+extern char *bitmap_button_ext_desktop_osdkeyboard[];
+extern char *bitmap_button_ext_desktop_osdadvkeyboard[];
+extern char *bitmap_button_ext_desktop_quickload[];
+extern char *bitmap_button_ext_desktop_quicksave[];
+extern char *bitmap_button_ext_desktop_quicksave_scr[];
+extern char *bitmap_button_ext_desktop_nmi[];
+extern char *bitmap_button_ext_desktop_zxunoprismswitch[];
+extern char *bitmap_button_ext_desktop_nothing[];
+extern char *bitmap_button_ext_desktop_zengmessage[];
+extern char *bitmap_button_ext_desktop_zengonlinemessage[];
+extern char *bitmap_button_ext_desktop_rewindtape[];
+extern char *bitmap_button_ext_desktop_ffwdtape[];
+extern char *bitmap_button_ext_desktop_joyleftright[];
+extern char *bitmap_button_ext_desktop_trash[];
+extern char *bitmap_button_ext_desktop_trash_not_empty[];
+extern char *bitmap_button_ext_desktop_trash_open[];
+extern char *bitmap_button_ext_desktop_trash_open_not_empty[];
+extern char *bitmap_button_ext_desktop_file_snapshot[];
+extern char *bitmap_button_ext_desktop_file_tape[];
+extern char *bitmap_button_ext_desktop_file_generic_smartload[];
+extern char *bitmap_button_ext_desktop_speccy_online[];
+extern char *bitmap_button_ext_desktop_zx81_online[];
+extern char *bitmap_button_ext_desktop_visualrealtape[];
+extern char *bitmap_button_ext_desktop_poke[];
+extern char *bitmap_button_ext_desktop_openwindow[];
+extern char *bitmap_button_ext_desktop_sendkeysmenu[];
+extern char *bitmap_button_ext_desktop_processmanagement[];
+extern char *bitmap_button_ext_desktop_processswitcher[];
+extern char *bitmap_button_ext_desktop_videoinfo[];
+extern char *bitmap_button_ext_desktop_textadvlocimage[];
+extern char *bitmap_button_ext_desktop_asciitable[];
+extern char *bitmap_button_ext_desktop_record_input[];
+extern char *bitmap_button_ext_desktop_inspectrumanalyzer[];
+extern char *bitmap_button_ext_desktop_networktrafiic[];
+extern char *bitmap_button_ext_desktop_videooutput[];
+extern char *bitmap_button_ext_desktop_videolayers[];
+
+extern char *bitmap_button_ext_desktop_zengonline_status[];
+extern char *bitmap_button_ext_desktop_zengonline[];
+
+extern char *bitmap_button_ext_desktop_backgroundwindow[];
+extern char *bitmap_button_ext_desktop_showbackgroundwindows[];
+extern char *bitmap_button_ext_desktop_midi_output_status[];
+
+extern char **zxdesktop_buttons_bitmaps[];
+
+
+extern char *bitmap_lowericon_ext_desktop_cassette_active[];
+extern char *bitmap_lowericon_ext_desktop_cassette_active_frametwo[];
+extern char *bitmap_lowericon_ext_desktop_cassette_active_framethree[];
+extern char *bitmap_lowericon_ext_desktop_cassette_active_framefour[];
+extern char *bitmap_lowericon_ext_desktop_cassette_inactive[];
+
+extern char *bitmap_lowericon_ext_desktop_cassette_std_active[];
+extern char *bitmap_lowericon_ext_desktop_cassette_std_inactive[];
+
+extern char *bitmap_lowericon_ext_desktop_mmc_active[];
+extern char *bitmap_lowericon_ext_desktop_mmc_inactive[];
+extern char *bitmap_lowericon_ext_desktop_z88_slot_nonumber_active[];
+extern char *bitmap_lowericon_ext_desktop_z88_slot_nonumber_inactive[];
+extern char *bitmap_lowericon_ext_desktop_z88_slot_one_active[];
+extern char *bitmap_lowericon_ext_desktop_z88_slot_one_inactive[];
+extern char *bitmap_lowericon_ext_desktop_z88_slot_two_active[];
+extern char *bitmap_lowericon_ext_desktop_z88_slot_two_inactive[];
+extern char *bitmap_lowericon_ext_desktop_z88_slot_three_active[];
+extern char *bitmap_lowericon_ext_desktop_z88_slot_three_inactive[];
+extern char *bitmap_lowericon_ext_desktop_mdv_active[];
+extern char *bitmap_lowericon_ext_desktop_mdv_inactive[];
+extern char *bitmap_lowericon_ext_desktop_flp_active[];
+extern char *bitmap_lowericon_ext_desktop_flp_inactive[];
+extern char *bitmap_lowericon_ext_desktop_msx_cart_active[];
+extern char *bitmap_lowericon_ext_desktop_msx_cart_inactive[];
+extern char *bitmap_lowericon_ext_desktop_svi_active[];
+extern char *bitmap_lowericon_ext_desktop_svi_inactive[];
+extern char *bitmap_lowericon_ext_desktop_coleco_active[];
+extern char *bitmap_lowericon_ext_desktop_coleco_inactive[];
+extern char *bitmap_lowericon_ext_desktop_sg1000_active[];
+extern char *bitmap_lowericon_ext_desktop_sg1000_inactive[];
+extern char *bitmap_lowericon_ext_desktop_sms_active[];
+extern char *bitmap_lowericon_ext_desktop_sms_inactive[];
+extern char *bitmap_button_ext_desktop_visualmicrodrive[];
+
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_active[];
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_active_framezero[];
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_active_frameone[];
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_active_frametwo[];
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_active_framethree[];
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_active_save_framezero[];
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_active_save_frameone[];
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_active_save_frametwo[];
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_active_save_framethree[];
+
+extern char *bitmap_lowericon_ext_desktop_plus3_flp_inactive[];
+
+extern char *bitmap_lowericon_ext_desktop_betadisk_active[];
+extern char *bitmap_lowericon_ext_desktop_betadisk_inactive[];
+
+extern char *bitmap_lowericon_ext_desktop_cart_timex_inactive[];
+extern char *bitmap_lowericon_ext_desktop_cart_timex_active[];
+
+extern char *bitmap_lowericon_ext_desktop_ide_active[];
+extern char *bitmap_lowericon_ext_desktop_ide_inactive[];
+
+
+extern char *bitmap_lowericon_ext_desktop_dandanator_active[];
+extern char *bitmap_lowericon_ext_desktop_dandanator_inactive[];
+
+extern char *bitmap_lowericon_ext_desktop_zxunoflash[];
+
+extern char *bitmap_lowericon_ext_desktop_zxmmcplusflash[];
+extern char *bitmap_lowericon_ext_desktop_samram[];
+extern char *bitmap_lowericon_ext_desktop_esxdoshandler[];
+extern char *bitmap_lowericon_ext_desktop_kartusho[];
+extern char *bitmap_lowericon_ext_desktop_ifrom[];
+extern char *bitmap_lowericon_ext_desktop_ql_external_rom_active[];
+extern char *bitmap_lowericon_ext_desktop_ql_external_rom_inactive[];
+extern char *bitmap_lowericon_ext_desktop_lec_memory[];
+extern char *bitmap_lowericon_ext_desktop_superupgrade[];
+
+extern char *bitmap_lowericon_ext_desktop_hilow_active[];
+extern char *bitmap_lowericon_ext_desktop_hilow_inactive[];
+extern char *bitmap_button_ext_desktop_hilow_visual_datadrive[];
+extern char *bitmap_lowericon_ext_desktop_hilow_convert[];
+
+extern char *bitmap_button_ext_desktop_visual_cassete_tape[];
+extern char *bitmap_lowericon_ext_desktop_audio_to_zx81_convert[];
+
+extern char *bitmap_button_ext_desktop_helpkeyboard[];
+
+extern char *bitmap_button_ext_desktop_my_machine_generic[];
+extern char *bitmap_button_ext_desktop_my_machine_gomas[];
+extern char *bitmap_button_ext_desktop_my_machine_zx80[];
+extern char *bitmap_button_ext_desktop_my_machine_tk80[];
+extern char *bitmap_button_ext_desktop_my_machine_tk82[];
+extern char *bitmap_button_ext_desktop_my_machine_zx81[];
+extern char *bitmap_button_ext_desktop_my_machine_ts1000[];
+extern char *bitmap_button_ext_desktop_my_machine_ts1500[];
+
+extern char *bitmap_button_ext_desktop_my_machine_cz1000[];
+extern char *bitmap_button_ext_desktop_my_machine_cz1500[];
+extern char *bitmap_button_ext_desktop_my_machine_cz1000_plus[];
+extern char *bitmap_button_ext_desktop_my_machine_cz1500_plus[];
+extern char *bitmap_button_ext_desktop_my_machine_cz2000[];
+extern char *bitmap_button_ext_desktop_my_machine_cz_spectrum[];
+extern char *bitmap_button_ext_desktop_my_machine_cz_spectrum_plus[];
+
+extern char *bitmap_button_ext_desktop_my_machine_tk82c[];
+extern char *bitmap_button_ext_desktop_my_machine_tk83[];
+extern char *bitmap_button_ext_desktop_my_machine_tk85[];
+extern char *bitmap_button_ext_desktop_my_machine_ace[];
+extern char *bitmap_button_ext_desktop_my_machine_ql[];
+extern char *bitmap_button_ext_desktop_my_machine_spectrum_128_spa[];
+extern char *bitmap_button_ext_desktop_my_machine_spectrum_128_eng[];
+extern char *bitmap_button_ext_desktop_my_machine_spectrum_p2[];
+extern char *bitmap_button_ext_desktop_my_machine_spectrum_p2a[];
+extern char *bitmap_button_ext_desktop_my_machine_spectrum_p3[];
+extern char *bitmap_button_ext_desktop_my_machine_spectrum_48_spa[];
+extern char *bitmap_button_ext_desktop_my_machine_inves[];
+extern char *bitmap_button_ext_desktop_my_machine_cpc_464[];
+extern char *bitmap_button_ext_desktop_my_machine_pcw_8256[];
+extern char *bitmap_button_ext_desktop_my_machine_cpc_6128[];
+extern char *bitmap_button_ext_desktop_my_machine_cpc_664[];
+extern char *bitmap_button_ext_desktop_my_machine_coleco[];
+extern char *bitmap_button_ext_desktop_my_machine_sms[];
+extern char *bitmap_button_ext_desktop_my_machine_sg1000[];
+extern char *bitmap_button_ext_desktop_my_machine_tk90x[];
+extern char *bitmap_button_ext_desktop_my_machine_tk95[];
+extern char *bitmap_button_ext_desktop_my_machine_msx[];
+extern char *bitmap_button_ext_desktop_my_machine_svi318[];
+extern char *bitmap_button_ext_desktop_my_machine_svi328[];
+extern char *bitmap_button_ext_desktop_my_machine_timex_ts2068[];
+extern char *bitmap_button_ext_desktop_my_machine_timex_tc2048[];
+extern char *bitmap_button_ext_desktop_my_machine_z88[];
+extern char *bitmap_button_ext_desktop_my_machine_zxuno[];
+extern char *bitmap_button_ext_desktop_my_machine_tsconf[];
+extern char *bitmap_button_ext_desktop_my_machine_baseconf[];
+extern char *bitmap_button_ext_desktop_my_machine_mk14[];
+extern char *bitmap_button_ext_desktop_my_machine_pentagon[];
+extern char *bitmap_button_ext_desktop_my_machine_spectrum_next[];
+extern char *bitmap_button_ext_desktop_my_machine_sam[];
+
+extern char *bitmap_button_ext_desktop_mirilla_lightgun[];
+extern char *bitmap_button_ext_desktop_mirilla_lightgun_disparada[];
+extern char *bitmap_button_ext_desktop_sendtextkeystrokesstatus[];
+extern char *bitmap_button_ext_desktop_paste_keystrokes[];
+extern char *bitmap_button_ext_desktop_clock[];
+extern char *bitmap_button_ext_desktop_calculator[];
+
+extern char *bitmap_button_ext_desktop_other_sad_mac[];
+extern char *bitmap_button_ext_desktop_other_clive_down_left[];
+extern char *bitmap_button_ext_desktop_other_clive_down_right[];
+extern char *bitmap_button_ext_desktop_other_clive_up_left[];
+extern char *bitmap_button_ext_desktop_other_clive_up_right[];
+extern char *bitmap_button_ext_desktop_other_clive_cry[];
+extern char *bitmap_button_ext_desktop_other_clive_sad[];
+extern char *bitmap_button_ext_desktop_other_clive_surprised[];
+extern char *bitmap_button_ext_desktop_other_clive_laugh[];
+extern char *bitmap_button_ext_desktop_other_clive_wink[];
+extern char *bitmap_button_ext_desktop_other_clive_heart[];
+extern char *bitmap_button_ext_desktop_other_clive_sunglasses[];
+extern char *bitmap_button_ext_desktop_other_clive_tongue[];
+extern char *bitmap_button_ext_desktop_other_clive_angel[];
+extern char *bitmap_button_ext_desktop_other_clive_angry[];
+extern char *bitmap_button_ext_desktop_other_clive_speccy[];
+extern char *bitmap_button_ext_desktop_other_clive_sleep[];
+extern char *bitmap_button_ext_desktop_other_clive_sleep2[];
+extern char *bitmap_button_ext_desktop_other_clive_sing1[];
+extern char *bitmap_button_ext_desktop_other_clive_sing2[];
+extern char *bitmap_button_ext_desktop_other_c5[];
+extern char *bitmap_button_ext_desktop_other_sinclair[];
+extern char *bitmap_button_ext_desktop_other_spectrum[];
+extern char *bitmap_button_ext_desktop_other_spectrum2[];
+extern char *bitmap_button_ext_desktop_other_clive_talk1[];
+extern char *bitmap_button_ext_desktop_other_clive_talk2[];
+extern char *bitmap_button_ext_desktop_other_clive_talk3[];
+extern char *bitmap_button_ext_desktop_other_clive_talk4[];
+extern char *bitmap_button_ext_desktop_other_clive_talk5[];
+extern char *bitmap_button_ext_desktop_other_clive_talk6[];
+extern char *bitmap_button_ext_desktop_other_clive_talk7[];
+extern char *bitmap_button_ext_desktop_other_clive_talk8[];
+extern char *bitmap_button_ext_desktop_other_clive_mute[];
+
+extern char *bitmap_button_ext_desktop_debugcpu_info[];
+extern char *bitmap_button_ext_desktop_cpu_z80[];
+extern char *bitmap_button_ext_desktop_cpu_m68k[];
+extern char *bitmap_button_ext_desktop_cpu_scmp[];
+
+#define EXT_DESKTOP_TOTAL_BUTTONS 14
+
+#define EXT_DESKTOP_BUTTONS_ANCHO 26
+#define EXT_DESKTOP_BUTTONS_ALTO 26
+
+#define EXT_DESKTOP_BUTTONS_TOTAL_SIZE 32
+
+#define EXT_DESKTOP_BUTTON_CLOSE_ALL_ID 12
+
+
+#define OTHER_ICONS_NAME_MAX_LENGHT 30
+
+struct s_zxdesktop_other_icons {
+    //usado de momento para alternate bitmaps
+    //nombre sin espacios
+    char name[OTHER_ICONS_NAME_MAX_LENGHT];
+    char **bitmap;
+};
+
+extern struct s_zxdesktop_other_icons zxdesktop_other_icons_list[];
+
+extern int zxdesktop_other_icons_count_list(void);
+
+#endif

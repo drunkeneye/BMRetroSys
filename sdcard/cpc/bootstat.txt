@@ -1,0 +1,5 @@
+CPC boot ROM status.
+
+The CPC kernel carries user-supplied ROMs on the SD card (/roms/CPC, see
+ROMS.txt) and verifies sizes at boot, so no fast-stat hints are needed
+here.

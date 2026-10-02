@@ -35,6 +35,7 @@ using namespace ::bmx::update;
 
 static const char kHost[] = "www.atarimania.com";
 static const char kMachinePath[] = "/machines/atari-400-800-xl-xe";
+static const char kMachinePathST[] = "/machines/atari-st";
 static const char kDumpDir[] = "SD:/dumps/atarimania";
 // Last-resort transport when DNS is unusable: the TCP destination becomes
 // this IP while SNI/Host/cert checks keep using the hostname. Fragile by
@@ -53,6 +54,7 @@ struct ClientState {
     int page_total;
     char last_query[80];
     int last_collection;
+    int machine;
     char title[ATARIMANIA_MAX_RESULTS][128];
     char year[ATARIMANIA_MAX_RESULTS][8];
     char url[ATARIMANIA_MAX_RESULTS][256];
@@ -383,6 +385,7 @@ bool ParseDump(const char *body, size_t len, char *url_out,
     const char *bound = strstr(dt, "<dt");
     if (bound == 0 || bound > body_end) bound = body_end;
     const char *h = strstr(dt, "/8bit/dumps/");
+    if (h == 0 || h >= bound) h = strstr(dt, "/st/dumps/");
     if (h == 0 || h >= bound) return false;
     // Back up to href=".
     const char *back = h;
@@ -489,12 +492,14 @@ static int FetchListPage(const char *query, int collection, int page) {
         collection == ATARIMANIA_DEMOS ? "&type=d"
         : collection == ATARIMANIA_UTILS ? "&type=u"
                                          : "";
+    const char *machine_path =
+        st.machine == ATARIMANIA_MACHINE_ST ? kMachinePathST : kMachinePath;
     if (page <= 1) {
         snprintf(url, sizeof(url), "https://%s%s?q=%s%s&per=%d", kHost,
-                 kMachinePath, encoded, type, ATARIMANIA_MAX_RESULTS);
+                 machine_path, encoded, type, ATARIMANIA_MAX_RESULTS);
     } else {
         snprintf(url, sizeof(url), "https://%s%s?q=%s%s&per=%d&page=%d",
-                 kHost, kMachinePath, encoded, type,
+                 kHost, machine_path, encoded, type,
                  ATARIMANIA_MAX_RESULTS, page);
     }
     const size_t body = FetchPage(url, "text/html", &ctx);
@@ -651,6 +656,12 @@ static int FetchDumpCore(const char *detail_url, char *out_path,
 
 extern "C" const char *atarimania_last_error(void) {
     return bmx::atarimania::State().error;
+}
+
+extern "C" void atarimania_set_machine(int machine) {
+    bmx::atarimania::State().machine =
+        machine == ATARIMANIA_MACHINE_ST ? ATARIMANIA_MACHINE_ST
+                                         : ATARIMANIA_MACHINE_8BIT;
 }
 }  // extern "C"
 

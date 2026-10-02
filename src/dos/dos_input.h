@@ -25,6 +25,11 @@ void poll_input(dos_input_t *input);
 // idle slices, including nested SHELL_Run).
 void drain_guest_keys(void);
 
+// Forwards the USB mouse accumulator into the DOSBox-X mouse core
+// (INT33 mickeys/absolute cursor + serial/PS/2), gated on the BMX menu
+// being closed. Same live pump as the key drain.
+void drain_guest_mouse(void);
+
 // Reboot request from the menu (core0). Codes mirror the DOSBox-X reboot
 // throw convention: 6 = soft, 3 = hard. The frame loop never polls this
 // directly; GFX_Events (guest thread) takes it and throws, so the request

@@ -344,6 +344,12 @@ int is_composite() {
       timing == MACHINE_TIMING_PAL_COMPOSITE;
 }
 
+// Machine override for forcing the V3D scaler path. Weak default off;
+// a machine backend (MSX) provides a strong definition to lock it on.
+__attribute__((weak)) int bmx_machine_forces_v3d(void) {
+  return 0;
+}
+
 // Legacy GLES shaders run only on Pi <= 3. Newer boards must expose a
 // board-specific shader backend before the shared CRT menu can enable them.
 int allow_shader() {

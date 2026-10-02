@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <ctype.h>
 #include <sys/stat.h>
 
@@ -134,6 +135,10 @@ typedef enum {
   MACHINE_EMULATOR_DOS,
   MACHINE_EMULATOR_ATARIST,
   MACHINE_EMULATOR_AMIGA,
+  MACHINE_EMULATOR_ZXSPECTRUM,
+  MACHINE_EMULATOR_CPC,
+  MACHINE_EMULATOR_MSX,
+  MACHINE_EMULATOR_A2600,
   MACHINE_EMULATOR_UNKNOWN,
 } MachineEmulator;
 
@@ -150,6 +155,8 @@ static struct menu_item *machine_emulator_item;
 static struct menu_item *machine_standard_item;
 static struct menu_item *machine_output_item;
 static struct menu_item *machine_mode_item;
+static struct menu_item *machine_apply_item;
+static struct menu_item *machine_reboot_item;
 
 static struct bmx_overclock_config overclock_state;
 static struct bmx_overclock_config overclock_saved_state;
@@ -390,6 +397,9 @@ void netcheck_job_stage_text(char *out, size_t out_size);
 // elsewhere). Menu-side events, so silent button presses are diagnosable.
 void netcheck_host_trace(const char *line);
 const char *atarimania_last_error(void);
+void atarimania_set_machine(int machine);
+// Mirrors update/atarimania_client.h (outside the common include path).
+enum { ATARIMANIA_MACHINE_8BIT = 0, ATARIMANIA_MACHINE_ST = 1 };
 static struct menu_item *atarimania_search_item;
 static struct menu_item *atarimania_collection_item;
 static struct menu_item *atarimania_folder_item;
@@ -962,6 +972,53 @@ static int dirent_is_dir(DirType dir_type, struct dirent *entry,
   return stat(fullpath(dir_type, entry->d_name), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+// File-browser display names for the 40-column menu. Long names cannot
+// show in full, and the tail (extension) is what identifies the file, so
+// rows longer than head + "..." + tail show the shortened form. The full
+// name stays in str_value (pick/attach/restore paths use it, never name)
+// and the cursor row scrolls it (ui.c marquee).
+#define BROWSER_NAME_HEAD 25
+#define BROWSER_NAME_TAIL 10
+static void shorten_browser_item_name(struct menu_item *item) {
+  // Display source is the full filename, NOT item->name: ui_new_item()
+  // truncates name to 47 chars at creation, so long names (common in
+  // system folders, e.g. "Lyra II Megademo, The (1991-06)(Sinclair
+  // User)(48K-128K).tzx" at 57 chars) would otherwise lose their true
+  // tail/extension here. str_value carries the complete name for all four
+  // browser row types; zip rows carry prefix+entry, so take the basename
+  // (which is what the row shows).
+  const char *full =
+      item->str_value[0] != '\0' ? item->str_value : item->name;
+  const char *slash = strrchr(full, '/');
+  const char *base = slash != NULL ? slash + 1 : full;
+  size_t len = strlen(base);
+  const size_t limit =
+      (size_t)BROWSER_NAME_HEAD + 3 + (size_t)BROWSER_NAME_TAIL;
+  if (len <= limit) {
+    // Short enough that no truncation ever happened: name already equals
+    // the full filename, leave it.
+    return;
+  }
+  char fullbuf[MAX_STR_VAL_LEN];
+  strncpy(fullbuf, base, sizeof(fullbuf) - 1);
+  fullbuf[sizeof(fullbuf) - 1] = '\0';
+  len = strlen(fullbuf);
+  snprintf(item->name, MAX_MENU_STR, "%.*s...%s", BROWSER_NAME_HEAD, fullbuf,
+           fullbuf + len - BROWSER_NAME_TAIL);
+}
+
+static void shorten_browser_names(struct menu_item *list) {
+  struct menu_item *item;
+  for (item = list->first_child; item != NULL; item = item->next) {
+    if (item->sub_id == MENU_SUB_PICK_FILE ||
+        item->sub_id == MENU_SUB_PICK_ZIPFILE ||
+        item->sub_id == MENU_SUB_ENTER_DIR ||
+        item->sub_id == MENU_SUB_ENTER_ZIPDIR) {
+      shorten_browser_item_name(item);
+    }
+  }
+}
+
 // Clears the file menu and populates it with files.
 static void list_files(struct menu_item *parent,
                        DirType dir_type, FileFilter filter,
@@ -1094,6 +1151,10 @@ static void list_files(struct menu_item *parent,
   struct menu_item *ffc = files_root.first_child;
   merge_sort(&ffc);
   files_root.first_child = ffc;
+
+  // Shorten display names after sorting (sort order stays by full name).
+  shorten_browser_names(&dirs_root);
+  shorten_browser_names(&files_root);
 
   // Transfer ownership of dirs children first, then files. Childless
   // parents are on the stack.
@@ -1262,7 +1323,7 @@ static void show_about() {
   struct menu_item *about_root = ui_push_menu(40, 10);
   char title[96];
   char stamp[64];
-  char desc[32];
+  char desc[64];
 
   // Build fingerprint: FNV-1a 64-bit over the running kernel image
   // (computed once; the updater version slot reads "unknown" on fork
@@ -1306,6 +1367,18 @@ static void show_about() {
       case BMC64_MACHINE_CLASS_AMIGA:
         kname = "kernel8.img.amiga";
         break;
+      case BMC64_MACHINE_CLASS_ZXSPECTRUM:
+        kname = "kernel8.img.zxspectrum";
+        break;
+      case BMC64_MACHINE_CLASS_CPC:
+        kname = "kernel8.img.cpc";
+        break;
+      case BMC64_MACHINE_CLASS_MSX:
+        kname = "kernel8.img.msx";
+        break;
+      case BMC64_MACHINE_CLASS_A2600:
+        kname = "kernel8.img.a2600";
+        break;
       default:
         break;
       }
@@ -1343,41 +1416,54 @@ static void show_about() {
 
   switch (emux_machine_class) {
   case BMC64_MACHINE_CLASS_C64:
-    strncpy (desc, "A Bare Metal C64 Emulator", 31);
+    strncpy (desc, "A Bare Metal C64 Emulator", sizeof(desc));
     break;
   case BMC64_MACHINE_CLASS_SCPU64:
-    strncpy (desc, "A Bare Metal SCPU64 Emulator", 31);
+    strncpy (desc, "A Bare Metal SuperCPU 64 Emulator", sizeof(desc));
     break;
   case BMC64_MACHINE_CLASS_C128:
-    strncpy (desc, "A Bare Metal C128 Emulator", 31);
+    strncpy (desc, "A Bare Metal C128 Emulator", sizeof(desc));
     break;
   case BMC64_MACHINE_CLASS_VIC20:
-    strncpy (desc, "A Bare Metal VIC20 Emulator", 31);
+    strncpy (desc, "A Bare Metal VIC-20 Emulator", sizeof(desc));
     break;
   case BMC64_MACHINE_CLASS_PLUS4:
   case BMC64_MACHINE_CLASS_PLUS4EMU:
-    strncpy (desc, "A Bare Metal PLUS/4 Emulator", 31);
+    strncpy (desc, "A Bare Metal Plus/4 Emulator", sizeof(desc));
     break;
   case BMC64_MACHINE_CLASS_PET:
-    strncpy (desc, "A Bare Metal PET Emulator", 31);
+    strncpy (desc, "A Bare Metal PET Emulator", sizeof(desc));
     break;
   case BMC64_MACHINE_CLASS_ATARI800:
-    strncpy (desc, "A Bare Metal 8Bit Emulator", 31);
+    strncpy (desc, "A Bare Metal Atari 800 Emulator", sizeof(desc));
     break;
   case BMC64_MACHINE_CLASS_DOS:
-    strncpy (desc, "A Bare Metal DOS Emulator", 31);
+    strncpy (desc, "A Bare Metal MS-DOS Emulator", sizeof(desc));
     break;
   case BMC64_MACHINE_CLASS_ATARIST:
-    strncpy (desc, "A Bare Metal ST Emulator", 31);
+    strncpy (desc, "A Bare Metal Atari ST Emulator", sizeof(desc));
     break;
   case BMC64_MACHINE_CLASS_AMIGA:
-    strncpy (desc, "A Bare Metal Amiga Emulator", 31);
+    strncpy (desc, "A Bare Metal Amiga Emulator", sizeof(desc));
+    break;
+  case BMC64_MACHINE_CLASS_ZXSPECTRUM:
+    strncpy (desc, "A Bare Metal ZX Spectrum Emulator", sizeof(desc));
+    break;
+  case BMC64_MACHINE_CLASS_CPC:
+    strncpy (desc, "A Bare Metal Amstrad CPC Emulator", sizeof(desc));
+    break;
+  case BMC64_MACHINE_CLASS_MSX:
+    strncpy (desc, "A Bare Metal MSX Emulator", sizeof(desc));
+    break;
+  case BMC64_MACHINE_CLASS_A2600:
+    strncpy (desc, "A Bare Metal Atari 2600 Emulator", sizeof(desc));
     break;
   default:
     strncpy (title, "ERROR", 15);
-    strncpy (desc, "Unknown Emulator", 31);
+    strncpy (desc, "Unknown Emulator", sizeof(desc));
     break;
   }
+  desc[sizeof(desc) - 1] = '\0';
 
   ui_menu_add_button(MENU_TEXT, about_root, title);
   ui_menu_add_button(MENU_TEXT, about_root, stamp);
@@ -1409,7 +1495,7 @@ static const struct license_menu_entry license_menu_entries[] = {
   { MENU_LICENSE_LINUX, "Linux", "/licenses/linux.txt" },
   { MENU_LICENSE_ATARI800, "Atari800", "/licenses/atari800.txt" },
   { MENU_LICENSE_DOS, "DOSBox-X", "/licenses/dosbox-x.txt" },
-  { MENU_LICENSE_ATARIST, "Hatari", "/licenses/atarist.txt" },
+  { MENU_LICENSE_ATARIST, "Atari ST (Hatari)", "/licenses/atarist.txt" },
   { MENU_LICENSE_AMIGA, "vAmiga", "/licenses/vamiga.txt" },
   { MENU_LICENSE_THIRD_PARTY, "Third-party sources", "/licenses/third_party_sources.txt" },
 };
@@ -2264,6 +2350,12 @@ static void update_pending_action_state(void) {
   if (system_reboot_item != NULL) {
     system_reboot_item->disabled = pending;
   }
+  if (machine_apply_item != NULL) {
+    machine_apply_item->disabled = !pending;
+  }
+  if (machine_reboot_item != NULL) {
+    machine_reboot_item->disabled = pending;
+  }
 }
 
 static int apply_pending_system_changes(
@@ -2853,6 +2945,10 @@ void emu_set_keyboard_info(
     detected_keyboard_product[i][BMX_USB_PRODUCT_STRING_SIZE - 1] = '\0';
   }
   update_detected_keyboard_items();
+}
+
+int emu_get_keyboard_count(void) {
+  return detected_keyboard_count;
 }
 
 static int keyboard_monitor_contains(
@@ -4442,7 +4538,10 @@ static void ui_set_hotkeys() {
   if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
       emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
       emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
-      emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
+      emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
+      emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
+      emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
+      emux_machine_class == BMC64_MACHINE_CLASS_A2600) {
     return;
   }
 
@@ -4772,46 +4871,70 @@ static void menu_mouse_drag_speed_changed(struct menu_item *item) {
   }
 }
 
-static int save_settings() {
-  FILE *fp;
+static const char *settings_base_name(void) {
   switch (emux_machine_class) {
   case BMC64_MACHINE_CLASS_C64:
-    fp = fopen("/settings.txt", "w");
-    break;
+    return "settings.txt";
   case BMC64_MACHINE_CLASS_SCPU64:
-    fp = fopen("/settings-scpu64.txt", "w");
-    break;
+    return "settings-scpu64.txt";
   case BMC64_MACHINE_CLASS_C128:
-    fp = fopen("/settings-c128.txt", "w");
-    break;
+    return "settings-c128.txt";
   case BMC64_MACHINE_CLASS_VIC20:
-    fp = fopen("/settings-vic20.txt", "w");
-    break;
+    return "settings-vic20.txt";
   case BMC64_MACHINE_CLASS_PLUS4:
-    fp = fopen("/settings-plus4.txt", "w");
-    break;
+    return "settings-plus4.txt";
   case BMC64_MACHINE_CLASS_PLUS4EMU:
-    fp = fopen("/settings-plus4emu.txt", "w");
-    break;
+    return "settings-plus4emu.txt";
   case BMC64_MACHINE_CLASS_PET:
-    fp = fopen("/settings-pet.txt", "w");
-    break;
+    return "settings-pet.txt";
   case BMC64_MACHINE_CLASS_ATARI800:
-    fp = fopen("/settings-atari800.txt", "w");
-    break;
+    return "settings-atari800.txt";
   case BMC64_MACHINE_CLASS_DOS:
-    fp = fopen("/settings-dos.txt", "w");
-    break;
+    return "settings-dos.txt";
   case BMC64_MACHINE_CLASS_ATARIST:
-    fp = fopen("/settings-atarist.txt", "w");
-    break;
+    return "settings-atarist.txt";
   case BMC64_MACHINE_CLASS_AMIGA:
-    fp = fopen("/settings-amiga.txt", "w");
-    break;
+    return "settings-amiga.txt";
+  case BMC64_MACHINE_CLASS_ZXSPECTRUM:
+    return "settings-zxspectrum.txt";
+  case BMC64_MACHINE_CLASS_CPC:
+    return "settings-cpc.txt";
+  case BMC64_MACHINE_CLASS_MSX:
+    return "settings-msx.txt";
+  case BMC64_MACHINE_CLASS_A2600:
+    return "settings-a2600.txt";
   default:
+    return NULL;
+  }
+}
+
+// Settings live under /settings/, never in the card root. Reads fall back
+// to the legacy root file once so existing setups migrate transparently;
+// writes always go to the new location.
+static void settings_path(char *out, size_t out_size, int legacy) {
+  const char *base = settings_base_name();
+  if (out == NULL || out_size == 0 || base == NULL) {
+    if (out != NULL && out_size > 0) {
+      out[0] = '\0';
+    }
+    return;
+  }
+  if (legacy) {
+    snprintf(out, out_size, "/%s", base);
+  } else {
+    snprintf(out, out_size, "/settings/%s", base);
+  }
+}
+
+static int save_settings() {
+  char path[64];
+  settings_path(path, sizeof(path), 0);
+  if (path[0] == '\0') {
     printf("ERROR: Unhandled machine\n");
     return 1;
   }
+  mkdir("/settings", 0777);
+  FILE *fp = fopen(path, "w");
 
   int r = emux_save_settings();
   if (r < 0) {
@@ -4863,7 +4986,11 @@ static int save_settings() {
   if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
       emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
       emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
-      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
+      emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MSX &&
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
   fprintf(fp, "hotkey_cf1=%d\n", hotkey_cf1_item->value);
   fprintf(fp, "hotkey_cf3=%d\n", hotkey_cf3_item->value);
   fprintf(fp, "hotkey_cf5=%d\n", hotkey_cf5_item->value);
@@ -5155,51 +5282,25 @@ static int load_settings() {
   pot_y_high_value = 192;
   pot_y_low_value = 64;
 
-  FILE *fp;
-  switch (emux_machine_class) {
-  case BMC64_MACHINE_CLASS_C64:
-    fp = fopen("/settings.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_SCPU64:
-    fp = fopen("/settings-scpu64.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_C128:
-    fp = fopen("/settings-c128.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_VIC20:
-    fp = fopen("/settings-vic20.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_PLUS4:
-    fp = fopen("/settings-plus4.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_PLUS4EMU:
-    fp = fopen("/settings-plus4emu.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_PET:
-    fp = fopen("/settings-pet.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_ATARI800:
-    fp = fopen("/settings-atari800.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_DOS:
-    fp = fopen("/settings-dos.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_ATARIST:
-    fp = fopen("/settings-atarist.txt", "r");
-    break;
-  case BMC64_MACHINE_CLASS_AMIGA:
-    fp = fopen("/settings-amiga.txt", "r");
-    break;
-  default:
+  char path[64];
+  settings_path(path, sizeof(path), 0);
+  if (path[0] == '\0') {
     printf("ERROR: Unhandled machine\n");
     return 0;
+  }
+  FILE *fp = fopen(path, "r");
+  if (fp == NULL) {
+    // Legacy location (card root) for pre-move setups; the next save
+    // migrates the file to /settings/.
+    settings_path(path, sizeof(path), 1);
+    fp = fopen(path, "r");
   }
 
   if (fp == NULL) {
     const int not_loaded[MAX_USB_DEVICES] = {0, 0, 0, 0};
     menu_usb_mapping_finish_load(not_loaded, not_loaded, not_loaded);
     if (emux_machine_class == BMC64_MACHINE_CLASS_SCPU64) {
-      load_sound_output_priority_setting("/settings.txt");
+    load_sound_output_priority_setting("/settings/settings.txt");
     }
     emux_load_settings_done();
     return 0;
@@ -5655,7 +5756,9 @@ static int load_settings() {
 
   if (emux_machine_class == BMC64_MACHINE_CLASS_SCPU64 &&
       !sound_output_priority_loaded) {
-    load_sound_output_priority_setting("/settings.txt");
+    if (!load_sound_output_priority_setting("/settings/settings.txt")) {
+      load_sound_output_priority_setting("/settings.txt");
+    }
   }
 
   emux_load_settings_done();
@@ -5737,9 +5840,25 @@ static void set_current_dir_names() {
   }
   strcpy(current_dir_names[DIR_ROOT], machine_sub_dir);
 
+  // CPC collections live as loose files at the machine root (not split
+  // across type subfolders), so its media browsers open there: tapes/,
+  // disks/ and loose .cdt/.dsk/.zip all show up and descend from one
+  // place. Navigation + remembered positions work as usual afterwards.
+  if (emux_machine_class == BMC64_MACHINE_CLASS_CPC) {
+    strcpy(current_dir_names[DIR_TAPES], machine_sub_dir);
+    strcpy(current_dir_names[DIR_DISKS], machine_sub_dir);
+  }
+  if (emux_machine_class == BMC64_MACHINE_CLASS_MSX) {
+    strcpy(current_dir_names[DIR_TAPES], machine_sub_dir);
+    strcpy(current_dir_names[DIR_CARTS], machine_sub_dir);
+  }
+  if (emux_machine_class == BMC64_MACHINE_CLASS_A2600) {
+    strcpy(current_dir_names[DIR_CARTS], machine_sub_dir);
+  }
+
   // These don't change
   strcpy(current_dir_names[DIR_ROMS], machine_sub_dir);
-  strcpy(current_dir_names[DIR_DRIVE_ROMS], "/roms/drives");
+  strcpy(current_dir_names[DIR_DRIVE_ROMS], "/roms/DRIVES");
   strcpy(current_dir_names[DIR_IEC], "/");
   strcpy(current_dir_names[DIR_PHONEBOOK], "/");
 
@@ -5816,9 +5935,25 @@ int zipbrowse_list(const char *prefix,
                    void *ctx);
 int zipbrowse_extract(const char *entry_path, const char *out_abs_path,
                       char *err, size_t errsz);
+int zipbrowse_extract_all(const char *out_abs_dir, char *err, size_t errsz);
 void zipbrowse_close(void);
 int zipbrowse_mkdir_chain(const char *abs_path);
 int zipbrowse_wipe_dir(const char *abs_dir);
+
+// Wipe this machine's extracted-archive caches on all volumes. Called
+// once at boot (no mounts can reference them yet); DOS additionally
+// calls it on every guest reboot so a re-autostart always extracts
+// fresh (stale cache + reboot = the mount source of truth is gone).
+void zip_wipe_machine_caches(void) {
+  static const char *zip_vols[] = { user_volume_name, system_volume_name };
+  size_t v;
+  for (v = 0; v < sizeof(zip_vols) / sizeof(zip_vols[0]); v++) {
+    char cache[128];
+    snprintf(cache, sizeof(cache), "%s%s%s/.zcache", zip_vols[v],
+             default_dir_names[DIR_SNAPS], machine_sub_dir);
+    zipbrowse_wipe_dir(cache);
+  }
+}
 
 static int zip_is_archive_name(const char *name) {
   const char *dot;
@@ -5840,6 +5975,8 @@ static int zip_purpose_allows(int id) {
   case MENU_AMIGA_HDF1_FILE:
   case MENU_ATARI_DRV_FILE:
   case MENU_ATARI_CART_FILE:
+  case MENU_MSX_CART_FILE:
+  case MENU_A2600_CART_FILE:
   case MENU_C64_CART_FILE:
   case MENU_C64_CART_8K_FILE:
   case MENU_C64_CART_16K_FILE:
@@ -5989,6 +6126,8 @@ static void zip_open_level(void) {
       ffc = files_root.first_child;
       merge_sort(&ffc);
       files_root.first_child = ffc;
+      shorten_browser_names(&dirs_root);
+      shorten_browser_names(&files_root);
       ui_add_all(&dirs_root, menu);
       ui_add_all(&files_root, menu);
     }
@@ -6017,9 +6156,9 @@ static void zip_descend(struct menu_item *item) {
   zip_open_level();
 }
 
-// Cache output path for an entry of the current (top) archive:
-// <cache>/<sanitized-zip-base>_<fnv>/<internal path>. Best effort mkdir.
-static void zip_cache_out(const char *entry, char *out, size_t outsz) {
+// Per-archive cache root for the current (top) archive:
+// <cache>/<sanitized-zip-base>_<fnv>. Isolates archives from each other.
+static void zip_cache_root(char *out, size_t outsz) {
   struct zip_level *top = zip_top();
   char cache_root[256];
   char vol[8];
@@ -6046,8 +6185,19 @@ static void zip_cache_out(const char *entry, char *out, size_t outsz) {
     }
   }
   zbase[n] = '\0';
-  snprintf(out, outsz, "%s/%s_%08x/%s", cache_root, zbase,
-           zip_fnv1a(top->zip_abs), entry);
+  snprintf(out, outsz, "%s/%s_%08x", cache_root, zbase,
+           zip_fnv1a(top->zip_abs));
+}
+
+// Cache output path for an entry of the current (top) archive:
+// <cache-root>/<internal path>. Best effort mkdir.
+static void zip_cache_out(const char *entry, char *out, size_t outsz) {
+  char root[256];
+  if (out == NULL || outsz == 0) return;
+  root[0] = '\0';
+  zip_cache_root(root, sizeof(root));
+  if (root[0] == '\0') return;
+  snprintf(out, outsz, "%s/%s", root, entry);
   // mkdir chain for the entry's parent dirs.
   {
     char parent[256];
@@ -6087,6 +6237,40 @@ static int zip_do_extract(const char *entry, char *out, size_t outsz) {
 // override for the attach flow. Returns 0 on success.
 static int zip_extract_pick(struct menu_item *item) {
   char out[256];
+  // DOS games span files (exe plus data): unpack the whole archive so the
+  // autostart-mounted folder holds the game, not just the picked file.
+  // Everywhere else single-file semantics stay (disk/cart images and
+  // autostarted single files are self-contained).
+  if (emux_machine_class == BMC64_MACHINE_CLASS_DOS &&
+      zip_purpose_id == MENU_AUTOSTART_FILE) {
+    struct zip_level *top = zip_top();
+    char err[128];
+    char root[256];
+    int rc;
+    if (top == NULL) {
+      return -1;
+    }
+    root[0] = '\0';
+    zip_cache_root(root, sizeof(root));
+    if (root[0] == '\0') {
+      return -1;
+    }
+    ui_info("Extracting archive...");
+    if (zipbrowse_open(top->zip_abs, err, sizeof(err)) != 0) {
+      ui_error(err[0] != '\0' ? err : "Cannot open archive");
+      return -1;
+    }
+    rc = zipbrowse_extract_all(root, err, sizeof(err));
+    zipbrowse_close();
+    if (rc != 0) {
+      ui_error(err[0] != '\0' ? err : "Extract failed");
+      return -1;
+    }
+    snprintf(zip_pick_abs, sizeof(zip_pick_abs), "%s/%s", root,
+             item->str_value);
+    zip_pick_active = 1;
+    return 0;
+  }
   if (zip_do_extract(item->str_value, out, sizeof(out)) != 0) {
     return -1;
   }
@@ -6119,6 +6303,13 @@ static int atarimania_rewrite_pick(struct menu_item *item) {
     // Raw ROM image: attach, then the CART case asks for the type when
     // detection fails (desktop TUI parity).
     item->id = MENU_ATARI_CART_FILE;
+  } else if ((strcasecmp(dot, ".st") == 0 || strcasecmp(dot, ".msa") == 0 ||
+              strcasecmp(dot, ".stx") == 0 || strcasecmp(dot, ".dim") == 0 ||
+              strcasecmp(dot, ".ipf") == 0) &&
+             emux_machine_class == BMC64_MACHINE_CLASS_ATARIST) {
+    // Atari ST floppy dump: run the normal disk attach flow, which
+    // serves .ST/.MSA/.STX through the FDC emulation.
+    item->id = MENU_DISK_FILE;
   } else {
     ui_error("Unsupported file type");
     return -1;
@@ -6263,6 +6454,9 @@ static void atarimania_run_search(void) {
   // Async: the core-0 worker fetches; the pump rebuilds this dialog with
   // results on completion. Rebuild now to show the searching placeholder.
   net_trace("run_search pressed");
+  atarimania_set_machine(emux_machine_class == BMC64_MACHINE_CLASS_ATARIST
+                             ? ATARIMANIA_MACHINE_ST
+                             : ATARIMANIA_MACHINE_8BIT);
   if (!netcheck_job_start_search(atarimania_query,
                                    atarimania_collection_item->value, 1)) {
     net_trace("run_search busy rejected");
@@ -6286,6 +6480,9 @@ static void atarimania_turn_page(int page) {
   }
   snprintf(tline, sizeof(tline), "turn_page %d pressed", page);
   net_trace(tline);
+  atarimania_set_machine(emux_machine_class == BMC64_MACHINE_CLASS_ATARIST
+                             ? ATARIMANIA_MACHINE_ST
+                             : ATARIMANIA_MACHINE_8BIT);
   if (!netcheck_job_start_search(atarimania_query,
                                    atarimania_collection_item->value,
                                    page)) {
@@ -6420,6 +6617,28 @@ static void select_file(struct menu_item *item) {
 	 strcpy (attached_disk_name[unit-8], item->str_value);
        }
        return;
+     case MENU_MSX_CART_FILE:
+       // Perform the attach (slot 1, plain/mapped ROM via msx.c).
+       ui_info("Attaching...");
+       if (emux_attach_cart(0, zip_pick_path(DIR_CARTS, item->str_value)) <
+           0) {
+         ui_pop_menu();
+         ui_error("Failed to attach cartridge");
+       } else {
+         ui_pop_all_and_toggle();
+       }
+       return;
+     case MENU_A2600_CART_FILE:
+       // Perform the attach (2600 cartridge via Stella createConsole).
+       ui_info("Attaching...");
+       if (emux_attach_cart(0, zip_pick_path(DIR_CARTS, item->str_value)) <
+           0) {
+         ui_pop_menu();
+         ui_error("Failed to attach cartridge");
+       } else {
+         ui_pop_all_and_toggle();
+       }
+       return;
      case MENU_AMIGA_HDF0_FILE:
      case MENU_AMIGA_HDF1_FILE: {
        int hdr = item->id == MENU_AMIGA_HDF0_FILE ? 0 : 1;
@@ -6518,8 +6737,8 @@ static void select_file(struct menu_item *item) {
      case MENU_DRIVE_ROM_FILE_CMDHD:
        if (strcasecmp(current_volume_names[DIR_DRIVE_ROMS],
                       system_volume_name) != 0 ||
-           strcasecmp(current_dir_names[DIR_DRIVE_ROMS], "/roms/drives") != 0) {
-         ui_error("Drive ROMs must be in SYS:/roms/drives");
+           strcasecmp(current_dir_names[DIR_DRIVE_ROMS], "/roms/DRIVES") != 0) {
+         ui_error("Drive ROMs must be in SYS:/roms/DRIVES");
          return;
        }
        if (emux_handle_rom_change(item, fullpath) != 0) {
@@ -6694,6 +6913,10 @@ static void select_file(struct menu_item *item) {
              ui_error("Need .P4S extension");
           } else if (emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
              ui_error("Need .ASF extension");
+          } else if (emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC) {
+             ui_error("Need .SNA extension");
+          } else if (emux_machine_class == BMC64_MACHINE_CLASS_A2600) {
+             ui_error("Need .STA extension");
           } else {
              ui_error("Need .VSF extension");
           }
@@ -6756,6 +6979,8 @@ static int menu_file_item_to_dir_index(struct menu_item *item) {
     return DIR_TAPES;
   case MENU_ATARI_CART_FILE:
   case MENU_ATARI_CART_BLANK_FILE:
+  case MENU_MSX_CART_FILE:
+  case MENU_A2600_CART_FILE:
   case MENU_C64_CART_FILE:
   case MENU_C64_CART_8K_FILE:
   case MENU_C64_CART_16K_FILE:
@@ -6983,7 +7208,10 @@ static struct menu_item *relist_files_after_dir_change(int menu_id) {
                       emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
                               emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
                               emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
-                              emux_machine_class == BMC64_MACHINE_CLASS_AMIGA
+                              emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
+                              emux_machine_class ==
+                                  BMC64_MACHINE_CLASS_ZXSPECTRUM ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_CPC
                           ? FILTER_NONE
                           : FILTER_DISK,
                       menu_id, 1);
@@ -6997,11 +7225,20 @@ static struct menu_item *relist_files_after_dir_change(int menu_id) {
                       emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
                               emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
                               emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
-                              emux_machine_class == BMC64_MACHINE_CLASS_AMIGA
+                              emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
+                              emux_machine_class ==
+                                  BMC64_MACHINE_CLASS_ZXSPECTRUM ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_A2600
                           ? FILTER_NONE
                           : FILTER_TAPE,
                       menu_id, 1);
   case MENU_ATARI_CART_FILE:
+    return show_files(DIR_CARTS, FILTER_NONE, menu_id, 1);
+  case MENU_MSX_CART_FILE:
+    return show_files(DIR_CARTS, FILTER_NONE, menu_id, 1);
+  case MENU_A2600_CART_FILE:
     return show_files(DIR_CARTS, FILTER_NONE, menu_id, 1);
   case MENU_ATARI_CART_BLANK_FILE:
     return show_files(DIR_CARTS, FILTER_NONE, menu_id, 1);
@@ -7567,8 +7804,44 @@ static void sanity_check_shader_params(void) {
   }
 }
 
+// Machine locks a clean V3D upscale (MSX): force every CRT effect master
+// off and grey it out so the menu shows the true (effect-free) state.
+// Rendering truth is enforced separately in SetShaderParams.
+static void force_clean_scaler_ui(void) {
+  struct menu_item *masters[] = {
+    s_curvature_item, s_convergence_item,
+    s_scanlines_item, s_multisample_item,
+    s_horizontal_filtering_item,
+    s_edge_blur_item, s_mask_enable_item, s_bloom_item,
+    s_vignette_item, s_uneven_illumination_item,
+    s_horizontal_jitter_item, s_composite_artifacts_item,
+    s_glass_reflection_item, s_rounded_screen_mask_item,
+    s_edge_glow_item, s_noise_item, s_output_response_item,
+  };
+  unsigned i;
+  for (i = 0; i < sizeof(masters) / sizeof(masters[0]); i++) {
+    if (masters[i] != NULL) {
+      masters[i]->value = 0;
+      masters[i]->disabled = 1;
+    }
+  }
+  if (s_crt_preset_item != NULL) {
+    s_crt_preset_item->disabled = 1;
+  }
+}
+
 static void update_crt_shader_availability(void) {
   int available = allow_shader() && crt_shader_display_mode_supported();
+  if (bmx_machine_forces_v3d() != 0) {
+    // Machine locks V3D on (MSX): show Yes, grey out the toggle.
+    s_enable_shader_item->value = available ? 1 : 0;
+    s_enable_shader_item->disabled = 1;
+    strcpy(s_enable_shader_item->custom_toggle_label[0], "Disabled");
+    strcpy(s_enable_shader_item->custom_toggle_label[1],
+           available ? "Yes (locked)" : "Disabled");
+    force_clean_scaler_ui();
+    return;
+  }
   s_enable_shader_item->disabled = !available;
   strcpy(s_enable_shader_item->custom_toggle_label[0],
          available ? "No" : "Disabled");
@@ -8232,11 +8505,15 @@ static void menu_value_changed(struct menu_item *item) {
     // Atari disk images (.atr/.xfd/.atx/...) are not in the VICE disk
     // filter; show everything on the Atari machine.
     // DOS images are likewise not in the VICE filter.
+    // CPC disks (.dsk) are likewise not in the VICE filter.
     show_files(DIR_DISKS,
                emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
                        emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
                        emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
-                       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA
+                       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_A2600
                    ? FILTER_NONE
                    : FILTER_DISK,
                MENU_DISK_FILE, 0);
@@ -8295,7 +8572,11 @@ static void menu_value_changed(struct menu_item *item) {
                emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
                        emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
                        emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
-                       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA
+                       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_A2600
                    ? FILTER_NONE
                    : FILTER_TAPE,
                MENU_TAPE_FILE, 0);
@@ -8308,6 +8589,14 @@ static void menu_value_changed(struct menu_item *item) {
     return;
   case MENU_C64_ATTACH_CART:
     show_files(DIR_CARTS, FILTER_CART, MENU_C64_CART_FILE, 0);
+    return;
+  case MENU_MSX_CART:
+    // MSX cartridges (.rom) are not in the VICE cart filter; show all.
+    show_files(DIR_CARTS, FILTER_NONE, MENU_MSX_CART_FILE, 0);
+    return;
+  case MENU_A2600_CART:
+    // 2600 cartridges (.a26/.bin) are not in the VICE cart filter.
+    show_files(DIR_CARTS, FILTER_NONE, MENU_A2600_CART_FILE, 0);
     return;
   case MENU_C64_ATTACH_CART_8K:
     show_files(DIR_CARTS, FILTER_NONE, MENU_C64_CART_8K_FILE, 0);
@@ -9004,6 +9293,10 @@ static void menu_value_changed(struct menu_item *item) {
     break;
   }
   case MENU_SHADER_ENABLE:
+    if (bmx_machine_forces_v3d() != 0) {
+      // Machine locks V3D on (MSX): refuse to switch off at runtime.
+      item->value = 1;
+    }
     reveal_crt_shader_preview();
     // Despite what the menu says, don't allow this to enable the shader
     // when conditions apply.
@@ -9307,6 +9600,14 @@ static BMC64MachineClass machine_emulator_class(MachineEmulator emulator) {
       return BMC64_MACHINE_CLASS_ATARIST;
     case MACHINE_EMULATOR_AMIGA:
       return BMC64_MACHINE_CLASS_AMIGA;
+    case MACHINE_EMULATOR_ZXSPECTRUM:
+      return BMC64_MACHINE_CLASS_ZXSPECTRUM;
+    case MACHINE_EMULATOR_CPC:
+      return BMC64_MACHINE_CLASS_CPC;
+    case MACHINE_EMULATOR_MSX:
+      return BMC64_MACHINE_CLASS_MSX;
+    case MACHINE_EMULATOR_A2600:
+      return BMC64_MACHINE_CLASS_A2600;
     default:
       return BMC64_MACHINE_CLASS_UNKNOWN;
   }
@@ -9324,18 +9625,22 @@ static BMC64C64Core machine_emulator_c64_core(MachineEmulator emulator) {
 
 static const char *machine_emulator_name(MachineEmulator emulator) {
   switch (emulator) {
-    case MACHINE_EMULATOR_X64: return "x64";
-    case MACHINE_EMULATOR_X64SC: return "x64sc";
-    case MACHINE_EMULATOR_XSCPU64: return "xscpu64";
-    case MACHINE_EMULATOR_X128: return "x128";
-    case MACHINE_EMULATOR_XVIC: return "xvic";
-    case MACHINE_EMULATOR_XPLUS4: return "xplus4";
-    case MACHINE_EMULATOR_XPLUS4EMU: return "xplus4emu";
-    case MACHINE_EMULATOR_XPET: return "xpet";
-    case MACHINE_EMULATOR_ATARI800: return "atari800";
-    case MACHINE_EMULATOR_DOS: return "dos";
-    case MACHINE_EMULATOR_ATARIST: return "atarist";
-    case MACHINE_EMULATOR_AMIGA: return "amiga";
+    case MACHINE_EMULATOR_X64: return "C64";
+    case MACHINE_EMULATOR_X64SC: return "C64 (cycle-exact)";
+    case MACHINE_EMULATOR_XSCPU64: return "SuperCPU 64";
+    case MACHINE_EMULATOR_X128: return "C128";
+    case MACHINE_EMULATOR_XVIC: return "VIC-20";
+    case MACHINE_EMULATOR_XPLUS4: return "Plus/4";
+    case MACHINE_EMULATOR_XPLUS4EMU: return "Plus/4 (emu)";
+    case MACHINE_EMULATOR_XPET: return "PET";
+    case MACHINE_EMULATOR_ATARI800: return "Atari 800";
+    case MACHINE_EMULATOR_DOS: return "MS-DOS";
+    case MACHINE_EMULATOR_ATARIST: return "Atari ST";
+    case MACHINE_EMULATOR_AMIGA: return "Amiga";
+    case MACHINE_EMULATOR_ZXSPECTRUM: return "ZX Spectrum";
+    case MACHINE_EMULATOR_CPC: return "Amstrad CPC";
+    case MACHINE_EMULATOR_MSX: return "MSX";
+    case MACHINE_EMULATOR_A2600: return "Atari 2600";
     default: return "Unknown";
   }
 }
@@ -9356,6 +9661,10 @@ static MachineEmulator current_machine_emulator(void) {
     case BMC64_MACHINE_CLASS_DOS: return MACHINE_EMULATOR_DOS;
     case BMC64_MACHINE_CLASS_ATARIST: return MACHINE_EMULATOR_ATARIST;
     case BMC64_MACHINE_CLASS_AMIGA: return MACHINE_EMULATOR_AMIGA;
+    case BMC64_MACHINE_CLASS_ZXSPECTRUM: return MACHINE_EMULATOR_ZXSPECTRUM;
+    case BMC64_MACHINE_CLASS_CPC: return MACHINE_EMULATOR_CPC;
+    case BMC64_MACHINE_CLASS_MSX: return MACHINE_EMULATOR_MSX;
+    case BMC64_MACHINE_CLASS_A2600: return MACHINE_EMULATOR_A2600;
     default: return MACHINE_EMULATOR_UNKNOWN;
   }
 }
@@ -9409,6 +9718,33 @@ static int machine_has_class(BMC64MachineClass machine_class) {
   return bmx_machine_by_class(machine_config, machine_class) != NULL;
 }
 
+/* Screenshots always land on the SD card under screenshots/<kernel>
+   (never beside snapshots). The folder chain is created on demand so
+   saving works on cards staged before the folder existed. */
+void bmx_screenshot_mkdir(const char *kernel) {
+  char dir[64];
+
+  if (kernel == NULL || kernel[0] == '\0') {
+    return;
+  }
+  snprintf(dir, sizeof dir, "SD:/screenshots/%s", kernel);
+  zipbrowse_mkdir_chain(dir);
+}
+
+void bmx_screenshot_path(char *out, size_t out_size, const char *kernel,
+                         int n) {
+  if (out == NULL || out_size == 0) {
+    return;
+  }
+  if (kernel == NULL || kernel[0] == '\0') {
+    kernel = "misc";
+  }
+  if (n < 0) {
+    n = 0;
+  }
+  snprintf(out, out_size, "SD:/screenshots/%s/shot%02d.bmp", kernel, n);
+}
+
 static void machine_populate_emulators(MachineEmulator preferred) {
   static const MachineEmulator emulators[] = {
       MACHINE_EMULATOR_X64, MACHINE_EMULATOR_X64SC,
@@ -9417,6 +9753,10 @@ static void machine_populate_emulators(MachineEmulator preferred) {
       MACHINE_EMULATOR_XPLUS4EMU, MACHINE_EMULATOR_XPET,
       MACHINE_EMULATOR_ATARI800, MACHINE_EMULATOR_DOS,
       MACHINE_EMULATOR_ATARIST, MACHINE_EMULATOR_AMIGA,
+      MACHINE_EMULATOR_ZXSPECTRUM,
+      MACHINE_EMULATOR_CPC,
+      MACHINE_EMULATOR_MSX,
+      MACHINE_EMULATOR_A2600,
   };
   int i;
 
@@ -9426,6 +9766,36 @@ static void machine_populate_emulators(MachineEmulator preferred) {
     if (machine_has_class(machine_emulator_class(emulator))) {
       machine_add_choice(machine_emulator_item,
                          machine_emulator_name(emulator), emulator);
+    }
+  }
+  /* Always present machines alphabetically sorted (case-insensitive)
+     so every kernel shows the same order. */
+  {
+    int j, k;
+    for (j = 1; j < machine_emulator_item->num_choices; j++) {
+      char tmp_name[MAX_MENU_STR];
+      int tmp_int;
+      int tmp_dis;
+      snprintf(tmp_name, sizeof tmp_name, "%s",
+               machine_emulator_item->choices[j]);
+      tmp_int = machine_emulator_item->choice_ints[j];
+      tmp_dis = machine_emulator_item->choice_disabled[j];
+      k = j - 1;
+      while (k >= 0 &&
+             strcasecmp(machine_emulator_item->choices[k], tmp_name) > 0) {
+        snprintf(machine_emulator_item->choices[k + 1],
+                 sizeof machine_emulator_item->choices[k + 1], "%s",
+                 machine_emulator_item->choices[k]);
+        machine_emulator_item->choice_ints[k + 1] =
+            machine_emulator_item->choice_ints[k];
+        machine_emulator_item->choice_disabled[k + 1] =
+            machine_emulator_item->choice_disabled[k];
+        k--;
+      }
+      snprintf(machine_emulator_item->choices[k + 1],
+               sizeof machine_emulator_item->choices[k + 1], "%s", tmp_name);
+      machine_emulator_item->choice_ints[k + 1] = tmp_int;
+      machine_emulator_item->choice_disabled[k + 1] = tmp_dis;
     }
   }
   i = machine_choice_index(machine_emulator_item, preferred);
@@ -9633,6 +10003,8 @@ static void menu_build_machine_switch(struct menu_item* parent) {
   machine_standard_item = NULL;
   machine_output_item = NULL;
   machine_mode_item = NULL;
+  machine_apply_item = NULL;
+  machine_reboot_item = NULL;
   if (load_machine_config(&machine_config) != 0 || machine_config == NULL) {
     ui_menu_add_button(MENU_TEXT, parent, "Invalid machines.ini");
     return;
@@ -9667,6 +10039,14 @@ static void menu_build_machine_switch(struct menu_item* parent) {
       machine_active_mode == NULL ? NULL : machine_active_mode->mode_id, 0);
 
   machine_active_emulator = emulator;
+
+  // Apply & Reboot / Reboot right here: no need to scroll down to System
+  // after picking another machine. Same ids/actions as the System rows.
+  machine_apply_item = ui_menu_add_button(
+      MENU_SYSTEM_APPLY, parent, "Apply & Reboot...");
+  machine_reboot_item =
+      ui_menu_add_button(MENU_SYSTEM_REBOOT, parent, "Reboot...");
+  update_pending_action_state();
 }
 
 static int overclock_configs_equal(
@@ -10146,6 +10526,12 @@ void build_menu(struct menu_item *root) {
      strcpy(snap_filt_ext[0],".p4s");
   } else if (emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
      strcpy(snap_filt_ext[0],".asf");
+  } else if (emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC) {
+     strcpy(snap_filt_ext[0],".sna");
+  } else if (emux_machine_class == BMC64_MACHINE_CLASS_A2600) {
+     strcpy(snap_filt_ext[0],".sta");
+  } else if (emux_machine_class == BMC64_MACHINE_CLASS_DOS) {
+     strcpy(snap_filt_ext[0],".dos");
   } else {
      strcpy(snap_filt_ext[0],".vsf");
   }
@@ -10159,7 +10545,7 @@ void build_menu(struct menu_item *root) {
     strcpy(machine_sub_dir, "/systems/C64");
     break;
   case BMC64_MACHINE_CLASS_SCPU64:
-    strcat(machine_info_txt,"SCPU64 ");
+    strcat(machine_info_txt,"SuperCPU 64 ");
     strcpy(machine_sub_dir, "/systems/SCPU64");
     break;
   case BMC64_MACHINE_CLASS_C128:
@@ -10167,12 +10553,12 @@ void build_menu(struct menu_item *root) {
     strcpy(machine_sub_dir, "/systems/C128");
     break;
   case BMC64_MACHINE_CLASS_VIC20:
-    strcat(machine_info_txt,"VIC20 ");
+    strcat(machine_info_txt,"VIC-20 ");
     strcpy(machine_sub_dir, "/systems/VIC20");
     break;
   case BMC64_MACHINE_CLASS_PLUS4:
   case BMC64_MACHINE_CLASS_PLUS4EMU:
-    strcat(machine_info_txt,"PLUS/4 ");
+    strcat(machine_info_txt,"Plus/4 ");
     strcpy(machine_sub_dir, "/systems/PLUS4");
     break;
   case BMC64_MACHINE_CLASS_PET:
@@ -10184,7 +10570,7 @@ void build_menu(struct menu_item *root) {
     strcpy(machine_sub_dir, "/systems/ATARI800");
     break;
   case BMC64_MACHINE_CLASS_DOS:
-    strcat(machine_info_txt,"DOSBox-X ");
+    strcat(machine_info_txt,"MS-DOS ");
     strcpy(machine_sub_dir, "/systems/DOS");
     break;
   case BMC64_MACHINE_CLASS_ATARIST:
@@ -10195,6 +10581,22 @@ void build_menu(struct menu_item *root) {
     strcat(machine_info_txt,"Amiga ");
     strcpy(machine_sub_dir, "/systems/AMIGA");
     break;
+  case BMC64_MACHINE_CLASS_ZXSPECTRUM:
+    strcat(machine_info_txt,"ZX Spectrum ");
+    strcpy(machine_sub_dir, "/systems/ZXSPECTRUM");
+    break;
+  case BMC64_MACHINE_CLASS_CPC:
+    strcat(machine_info_txt,"Amstrad CPC ");
+    strcpy(machine_sub_dir, "/systems/CPC");
+    break;
+  case BMC64_MACHINE_CLASS_MSX:
+    strcat(machine_info_txt,"MSX ");
+    strcpy(machine_sub_dir, "/systems/MSX");
+    break;
+  case BMC64_MACHINE_CLASS_A2600:
+    strcat(machine_info_txt,"Atari 2600 ");
+    strcpy(machine_sub_dir, "/systems/A2600");
+    break;
   default:
     strcat(machine_info_txt,"??? ");
     strcpy(machine_sub_dir, "/");
@@ -10203,16 +10605,7 @@ void build_menu(struct menu_item *root) {
 
   // Fresh boot = no mounted images: wipe extracted archive caches on all
   // volumes (never deleted mid-session while mounts may reference them).
-  {
-    static const char *zip_vols[] = { user_volume_name, system_volume_name };
-    size_t v;
-    for (v = 0; v < sizeof(zip_vols) / sizeof(zip_vols[0]); v++) {
-      char cache[128];
-      snprintf(cache, sizeof(cache), "%s%s%s/.zcache", zip_vols[v],
-               default_dir_names[DIR_SNAPS], machine_sub_dir);
-      zipbrowse_wipe_dir(cache);
-    }
-  }
+  zip_wipe_machine_caches();
 
 
   char scratch[16];
@@ -10304,7 +10697,10 @@ void build_menu(struct menu_item *root) {
          (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
           emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
           emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
-          emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) ?
+          emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
+          emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
+          emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
+          emux_machine_class == BMC64_MACHINE_CLASS_A2600) ?
          "Autostart..." : "Autostart Prg/Disk...");
      emux_get_int(Setting_AutostartWarp, &tmp);
      ui_menu_add_toggle(MENU_AUTOSTART_WARP, root, "Autostart Warp", tmp);
@@ -10322,13 +10718,20 @@ void build_menu(struct menu_item *root) {
   if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
       emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
       emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
-      emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
+      emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
+      emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
+      emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
+      emux_machine_class == BMC64_MACHINE_CLASS_A2600) {
     // Atari SIO drives D1:-D8: plus disk-set/rotate/blank management are
     // built by the bridge (emux_add_drive_option with drive -1 above);
     // the VICE drive model/IEC/default-disk UI does not apply.
     // DOS is also a non-VICE core: no VICE drive UI.
     // ATARIST is also a non-VICE core: no VICE drive UI.
     // AMIGA is also a non-VICE core: no VICE drive UI (DF0 only).
+    // ZXSPECTRUM is also a non-VICE core: no drives at all.
+    // CPC is also a non-VICE core: bridge-built A/B floppies only.
+    // MSX is also a non-VICE core: bridge-built cartridge only.
+    // A2600 is also a non-VICE core: bridge-built cartridge only.
   } else {
     build_drive_menu(drive_parent, &drive_menu_specs[0]);
 
@@ -10347,7 +10750,10 @@ void build_menu(struct menu_item *root) {
       emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
       emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
       emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
-      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
+      emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
     ui_menu_add_button(MENU_DRIVE_CHANGE_ROM, drive_parent, "Change ROM...");
   }
 
@@ -10355,7 +10761,10 @@ void build_menu(struct menu_item *root) {
       emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
       emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
       emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
-      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
+      emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
     parent = ui_menu_add_folder(drive_parent, "Create empty Disk");
       ui_menu_add_button(MENU_CREATE_D64, parent, "D64...");
       ui_menu_add_button(MENU_CREATE_D67, parent, "D67...");
@@ -10384,11 +10793,12 @@ void build_menu(struct menu_item *root) {
 
   parent = emux_add_cartridge_options(root);
 
-  // No cassette interface on a PC, an Amiga or an Atari ST; every other
-  // machine keeps its Tape menu.
+  // No cassette interface on a PC, an Amiga, an Atari ST or a 2600;
+  // every other machine keeps its Tape menu.
   if (emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
       emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
-      emux_machine_class != BMC64_MACHINE_CLASS_ATARIST) {
+      emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
   parent = ui_menu_add_folder(root, "Tape");
 
     ui_menu_add_button(MENU_ATTACH_TAPE, parent, "Attach tape image...");
@@ -10413,8 +10823,10 @@ void build_menu(struct menu_item *root) {
 
   ui_menu_add_divider(root);
 
-  // Online resources (Atari 8-bit only for now).
-  if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800) {
+  // Online resources (Atari 8-bit + Atari ST; the client searches the
+  // matching atarimania.com machine section per kernel).
+  if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
+      emux_machine_class == BMC64_MACHINE_CLASS_ATARIST) {
     struct menu_item *online_parent =
         ui_menu_add_folder(root, "Online Resources");
     atarimania_folder_item =
@@ -10492,12 +10904,19 @@ void build_menu(struct menu_item *root) {
         ui_menu_add_toggle_labels(MENU_SHADER_ENABLE, shader,
            "Enable CRT Shader?", crt_filter != MENU_VIDEO_FILTER_NONE, "No", "Yes");
 
-     if (!allow_shader()) {
-        s_enable_shader_item->value = 0;
-        s_enable_shader_item->disabled = 1;
-        strcpy (s_enable_shader_item->custom_toggle_label[0], "Disabled");
-        strcpy (s_enable_shader_item->custom_toggle_label[1], "Disabled");
-     }
+      if (bmx_machine_forces_v3d() != 0) {
+         // Machine locks V3D on (MSX): keep enabled, grey out.
+         s_enable_shader_item->value = 1;
+         s_enable_shader_item->disabled = 1;
+         strcpy (s_enable_shader_item->custom_toggle_label[0], "Disabled");
+         strcpy (s_enable_shader_item->custom_toggle_label[1], "Yes (locked)");
+         force_clean_scaler_ui();
+      } else if (!allow_shader()) {
+         s_enable_shader_item->value = 0;
+         s_enable_shader_item->disabled = 1;
+         strcpy (s_enable_shader_item->custom_toggle_label[0], "Disabled");
+         strcpy (s_enable_shader_item->custom_toggle_label[1], "Disabled");
+      }
 
      s_crt_preset_item = ui_menu_add_multiple_choice(
         MENU_SHADER_PRESET, shader, "Preset");
@@ -10910,7 +11329,10 @@ void build_menu(struct menu_item *root) {
    if (emux_machine_class == BMC64_MACHINE_CLASS_ATARI800 ||
        emux_machine_class == BMC64_MACHINE_CLASS_DOS ||
        emux_machine_class == BMC64_MACHINE_CLASS_ATARIST ||
-       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA) {
+       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
+       emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
+       emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
+       emux_machine_class == BMC64_MACHINE_CLASS_A2600) {
       ui_menu_add_button(MENU_ATARI_SCREENSHOT, video_parent,
                       "Save screenshot (.bmp)");
    }
@@ -10944,13 +11366,19 @@ void build_menu(struct menu_item *root) {
   if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
       emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
       emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
-      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
+      emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
     sound_sid_parent = ui_menu_add_folder(sound_parent, "SID");
   }
 
   emux_add_sound_options(sound_emulation_parent, sound_sid_parent,
                          sound_parent);
 
+  // The 2600 has no computer keyboard, but its console Select/Reset
+  // switches live in the Keyboard folder as mappable shortcuts.
+  {
   parent = ui_menu_add_folder(root, "Keyboard");
 
   for (i = 0; i < MAX_USB_DEVICES; i++) {
@@ -10970,7 +11398,10 @@ void build_menu(struct menu_item *root) {
   if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
       emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
       emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
-      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
+      emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
     ui_menu_add_button(MENU_KEYBOARD_EDITOR, parent,
                        "Mapping Editor...");
   }
@@ -10985,7 +11416,10 @@ void build_menu(struct menu_item *root) {
   if (emux_machine_class != BMC64_MACHINE_CLASS_ATARI800 &&
       emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
       emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
-      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA) {
+      emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
+      emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
+      emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
   child = hotkey_cf1_item =
       ui_menu_add_multiple_choice(MENU_HOTKEY_CF1, parent, "C= + F1 Hotkey");
   child->value = HOTKEY_CHOICE_NONE;
@@ -11023,7 +11457,10 @@ void build_menu(struct menu_item *root) {
   child->value = HOTKEY_CHOICE_MENU;
   set_hotkey_choices(hotkey_tf7_item);
   }  // !ATARI800 && !DOS && !ATARIST && !AMIGA (CBM/CTRL hotkeys are VICE concepts)
+  }  // Keyboard folder
 
+  // No mouse on a 2600.
+  if (emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
   parent = ui_menu_add_folder(root, "Mouse");
   detected_mouse_item = ui_menu_add_button_with_value(
       MENU_TEXT, parent, "Detected 1", 0, "", "");
@@ -11078,6 +11515,7 @@ void build_menu(struct menu_item *root) {
   ui_menu_add_range(MENU_MOUSE_SENSITIVITY, parent, "Sensitivity (%)",
                     10, 200, 10, tmp);
   ui_menu_add_button(MENU_MOUSE_MONITOR, parent, "Monitor...");
+  }  // Mouse folder (skipped on A2600)
 
   parent = ui_menu_add_folder(root, "Joyports");
 
@@ -11120,9 +11558,14 @@ void build_menu(struct menu_item *root) {
 
   menu_usb_mapping_initialize();
 
+  // No keyboard keysets on a 2600 (USB gamepads only).
+  if (emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
   ui_menu_add_button(MENU_CONFIGURE_KEYSET1, parent, "Configure Keyset 1...");
   ui_menu_add_button(MENU_CONFIGURE_KEYSET2, parent, "Configure Keyset 2...");
+  }
 
+  // No GPIO on a 2600.
+  if (emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
   parent = ui_menu_add_folder(root, "GPIO");
 
   child = gpio_config_item =
@@ -11169,9 +11612,13 @@ void build_menu(struct menu_item *root) {
                         parent, "Configure Custom GPIO...");
         ui_menu_add_button(MENU_GPIO_MONITOR, parent, "Monitor...");
      }
+  }  // GPIO folder (skipped on A2600)
 
+  // No network on a 2600.
+  if (emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
   parent = network_folder_item = ui_menu_add_folder(root, "Network");
      build_network_menu(parent);
+  }  // Network folder (skipped on A2600)
 
   ui_menu_add_divider(root);
 

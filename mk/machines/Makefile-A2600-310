@@ -1,0 +1,19 @@
+#
+# Makefile for an A2600 kernel using BMX
+#
+# The Atari 2600 core (vendored Stella emucore + common subset under
+# third_party/stella, plus the BMX backend and hardware module under
+# src/a2600) is compiled directly by the main Makefile (BMC64_OBJS +
+# pattern rules), so there are no prebuilt VICE-style libraries to link.
+# This file only selects the machine class and lets the main Makefile
+# do the rest.
+#
+
+MACHINE_CLASS = RASPI_A2600
+
+# Run the 2600 frame loop on core 1 like the other machines.
+BMX_EMU_MULTICORE ?= 1
+
+VICELIBS :=
+
+include Makefile

@@ -669,7 +669,7 @@ bool fatFile::Seek(uint32_t *pos, uint32_t type) {
 	}
 //	LOG_MSG("Seek to %d with type %d (absolute value %d)", *pos, type, seekto);
 
-	seekto = std::max(seekto, 0);
+	seekto = std::max(seekto, (int32_t)0);
 	seekpos = (uint32_t)seekto;
 	currentSector = myDrive->getAbsoluteSectFromBytePos(firstCluster, seekpos, &file_ccm);
 	if (currentSector == 0) {
@@ -2650,8 +2650,8 @@ bool fatDrive::AllocationInfo(uint16_t *_bytes_sector, uint8_t *_sectors_cluster
 		/* FAT12/FAT16 should never allow more than 0xFFF6 clusters and partitions larger than 2GB */
 		*_bytes_sector = (uint16_t)getSectSize();
 		*_sectors_cluster = BPB.v.BPB_SecPerClus;
-		*_total_clusters = (uint16_t)MIN(CountOfClusters,0xFFFFu);
-		*_free_clusters = (uint16_t)MIN(countFree,0xFFFFu);
+		*_total_clusters = (uint16_t)MIN(CountOfClusters,(uint32_t)0xFFFFu);
+		*_free_clusters = (uint16_t)MIN(countFree,(uint32_t)0xFFFFu);
 	}
 
 	return true;

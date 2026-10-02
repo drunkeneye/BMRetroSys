@@ -25,7 +25,7 @@ from typing import Iterable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LAYOUT = REPO_ROOT / "sd-layout.toml"
-BOARDS = ("pi4", "pi5")
+BOARDS = ("pi3", "pi4", "pi5")
 
 BUILD_PROFILE_TEXT = """Build profile: {profile}
 
@@ -326,7 +326,35 @@ def render_config_and_cmdline(
     cmdline = _read_ascii(REPO_ROOT / "sdcard/cmdline.txt", "base cmdline.txt")
     kernel_name = f"{contract.base}.atari800"
 
-    if context.board == "pi4":
+    if context.board == "pi3":
+        # Pi3: pure firmware legacy path (dispmanx + GLES2 + crt-pi shader).
+        # No pi4kms/v3dcrt backends: those blocks are RASPPI==4-guarded and
+        # inert on Pi3. Keep cmdline minimal.
+        config = _insert_managed_lines(
+            config,
+            (f"kernel={kernel_name}", "hdmi_group:0=1", "hdmi_mode:0=19"),
+            pi4=True,
+        )
+        cmdline = _set_first_line_option(cmdline, "pi5kms", None)
+        if context.profile == "debug" and "enable_uart=1\n" not in config:
+            config += (
+                "\nenable_uart=1\n"
+                "uart_2ndstage=1\n"
+                "init_uart_baud=115200\n"
+            )
+        if context.profile == "debug" and "uart_2ndstage=" not in config:
+            config += "uart_2ndstage=1\n"
+        if context.profile == "debug" and "init_uart_baud=" not in config:
+            config += "init_uart_baud=115200\n"
+        if context.profile == "debug" and "init_uart_clock=" not in config:
+            config += "init_uart_clock=48000000\n"
+        config += (
+            "\narm_64bit=0\n"
+            "initial_turbo=0\n"
+            "\n[pi3]\n"
+            "max_framebuffers=2\n"
+        )
+    elif context.board == "pi4":
         config = _insert_managed_lines(
             config,
             (f"kernel={kernel_name}", "hdmi_group:0=1", "hdmi_mode:0=19"),
@@ -437,7 +465,12 @@ def prepare_utils(generated: Path) -> None:
 
 def prepare_profile_files(context: StageContext, generated: Path) -> None:
     profile_text = BUILD_PROFILE_TEXT.format(profile=context.profile)
-    if context.board == "pi4":
+    if context.board == "pi3":
+        profile_text += (
+            "\nPi 3:\n"
+            "- AArch32 legacy build (VideoCore IV firmware dispmanx + GLES2 + crt-pi)\n"
+        )
+    elif context.board == "pi4":
         profile_text += (
             "\nPi 4 / Pi 400:\n"
             + (

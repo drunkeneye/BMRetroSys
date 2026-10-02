@@ -524,6 +524,17 @@ extern void emu_set_current_sound_output(enum bmx_sound_output output,
 // raw usb data.
 extern int emu_wants_raw_usb(void);
 
+// Core-0 scheduler liveness tick (incremented every core-0 loop pass in
+// multicore builds). Lets an emulator core tell a dead core 0 (no USB,
+// no scheduler) apart from dead USB hardware.
+extern unsigned long bmx_core0_tick(void);
+
+// Boot-stage marker for wedged-core-0 triage (core 0 writes, any core
+// reads): 20 = emulator released, 30 = USBHCI init done, 40 = CKernel::Run
+// USB setup done. Sticky: never reset, so the last reached stage survives.
+extern void bmx_set_boot_stage(unsigned long stage);
+extern unsigned long bmx_get_boot_stage(void);
+
 // Send the emulator raw usb data. Used for configuring usb devices in menu.
 extern void emu_set_raw_usb(int device,
                             unsigned buttons,

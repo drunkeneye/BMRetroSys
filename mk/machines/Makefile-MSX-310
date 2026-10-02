@@ -1,0 +1,19 @@
+#
+# Makefile for an MSX kernel using BMX
+#
+# The MSX core (vendored Z80 + vendored machines/msx.c +
+# video_chips/vdp_9918a.c + BMX hardware module under src/msx, plus the
+# ZEsarUX CPU/AY/audio subset from third_party/zesarux) is compiled
+# directly by the main Makefile (BMC64_OBJS + pattern rules), so there are
+# no prebuilt VICE-style libraries to link. This file only selects the
+# machine class and lets the main Makefile do the rest.
+#
+
+MACHINE_CLASS = RASPI_MSX
+
+# Run the MSX frame loop on core 1 like the other machines.
+BMX_EMU_MULTICORE ?= 1
+
+VICELIBS :=
+
+include Makefile

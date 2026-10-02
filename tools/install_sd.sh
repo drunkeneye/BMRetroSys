@@ -11,7 +11,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") BOARD MOUNTPOINT [--stage-dir DIR]
 
-BOARD must be one of: pi4, pi5.
+BOARD must be one of: pi3, pi4, pi5.
 
 Copies the prepared BMX boot partition contents for BOARD into an already
 mounted FAT boot partition.
@@ -62,6 +62,10 @@ while (($# > 0)); do
 done
 
 case "$BOARD" in
+  pi3)
+    BOARD_NAME="Pi 3"
+    KERNEL_NAME="kernel7l.img.c64"
+    ;;
   pi4)
     BOARD_NAME="Pi 4 / Pi 400"
     KERNEL_NAME=""

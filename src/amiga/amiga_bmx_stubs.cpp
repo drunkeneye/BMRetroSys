@@ -122,17 +122,9 @@ int ftruncate(int fd, long length) {
   return -1;
 }
 
-// DMS unpacker (external xdms on desktop; DMS is out of scope on BMX,
-// DF0-ADF only). Non-zero = failure, so DMS images report an error.
-unsigned short extractDMS(const unsigned char *in, size_t inSize,
-                          unsigned char **out, size_t *outSize, int verbose) {
-  (void)in;
-  (void)inSize;
-  (void)out;
-  (void)outSize;
-  (void)verbose;
-  return 1;
-}
+// extractDMS is provided by the compiled xDMS sources
+// (third_party/vamiga/Core/rvlib/ThirdParty/xdms/); see Makefile
+// VAMIGA_ALL_CSRCS. No stub here (it would duplicate the real symbol).
 
 }  // extern "C"
 

@@ -1,0 +1,11 @@
+MSX system ROM (/roms/MSX on the SD card).
+
+One file is needed:
+
+  msx.rom         32768 bytes = BIOS 16K (0000-3FFF) + BASIC 16K (4000-7FFF)
+
+Any MSX1 BIOS+BASIC image in this layout works (e.g. Philips VG-8020).
+A C-BIOS image (cbios_main_msx1.rom, renamed to msx.rom) also boots.
+
+Missing file: copy a genuine dump with the exact name above into
+/roms/MSX/ by hand.

@@ -2761,8 +2761,8 @@ void VMWARE_MousePosition(uint16_t pos_x, uint16_t pos_y) {
                 tmp_y = pos_y > video_clip_y ? pos_y - video_clip_y : 0;
         }
 
-        mouse_x = (std::min)(0xFFFFu, static_cast<uint32_t>(tmp_x * 0xFFFF / (video_res_x - 1) + 0.499));
-        mouse_y = (std::min)(0xFFFFu, static_cast<uint32_t>(tmp_y * 0xFFFF / (video_res_y - 1) + 0.499));
+        mouse_x = (std::min)((uint32_t)0xFFFFu, static_cast<uint32_t>(tmp_x * 0xFFFF / (video_res_x - 1) + 0.499));
+        mouse_y = (std::min)((uint32_t)0xFFFFu, static_cast<uint32_t>(tmp_y * 0xFFFF / (video_res_y - 1) + 0.499));
 
         mouse_updated = true;
 }

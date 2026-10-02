@@ -403,6 +403,11 @@ void emu_set_menu_mouse(int left, int right, int middle,
 // Should acquire lock around changing.
 extern int ui_toggle_pending;
 
+// Number of USB keyboards currently registered (menu.c; updated by
+// emu_set_keyboard_info on core 0). Diagnostic use: a zero here while keys
+// do nothing means USB never enumerated the keyboard.
+int emu_get_keyboard_count(void);
+
 extern uint8_t *raw_video_font;
 
 // If layer is visible right now, reveal it and render only the current item.

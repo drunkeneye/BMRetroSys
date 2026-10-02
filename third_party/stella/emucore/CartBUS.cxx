@@ -1,0 +1,1184 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#include <cstring>
+
+#ifdef DEBUGGER_SUPPORT
+  #include "Debugger.hxx"
+  #include "CartBUSWidget.hxx"
+  #include "CartBUSInfoWidget.hxx"
+#endif
+#include "System.hxx"
+#include "M6532.hxx"
+#include "TIA.hxx"
+#include "CartBUS.hxx"
+#include "exception/FatalEmulationError.hxx"
+
+namespace {
+  // Location of data within the RAM copy of the BUS Driver.
+  constexpr int
+    COMMSTREAM = 0x10,
+    JUMPSTREAM = 0x11;
+
+  constexpr bool BUS_STUFF_ON(uInt8 mode) { return (mode & 0x0FU) == 0; }
+  constexpr bool DIGITAL_AUDIO_ON(uInt8 mode) { return (mode & 0xF0U) == 0; }
+
+}  // namespace
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+CartridgeBUS::CartridgeBUS(ByteSpan image, string_view md5,
+                           const Settings& settings)
+  : CartridgeARM(settings, md5)
+{
+  // Copy the ROM image into my buffer
+  const size_t size = image.size();
+  std::copy_n(image.data(), std::min(32_KB, size), myImage.data());
+
+  // Detect cart version
+  setupVersion();
+
+  // Subspan for the BUS driver in RAM (always at start of myRAM)
+  myDriverImage = ByteMSpan{myRAM};
+
+  const bool devSettings = settings.getBool("dev.settings");
+
+  if (myBUSSubtype == BUSSubtype::BUS0)
+  {
+    // BUS0 driver is 3K, so configuration is different from others
+    createRomAccessArrays(24_KB);
+
+    // Pointer to the program ROM (28K @ 0 byte offset)
+    myProgramImage = ByteMSpan{myImage}.subspan(3_KB);
+
+    // Subspan for the display RAM (@ 0x0C00 offset)
+    myDisplayImage = ByteMSpan{myRAM}.subspan(0x0C00);
+
+    // Create Thumbulator ARM emulator
+    myThumbEmulator = std::make_unique<Thumbulator>(
+      reinterpret_cast<uInt16*>(myImage.data()),
+      reinterpret_cast<uInt16*>(myRAM.data()),
+      U32(32_KB),
+      0x00000C00,
+      0x00000C08,
+      0x40001FFC,
+      devSettings ? settings.getBool("dev.thumb.trapfatal") : false,
+      devSettings ? DBL(settings.getFloat("dev.thumb.cyclefactor")) : 1.0,
+      Thumbulator::ConfigureFor::BUS,
+      this);
+  }
+  else
+  {
+    // BUS1+ drivers are 2K
+    createRomAccessArrays(28_KB);
+
+    // Pointer to the program ROM (28K @ 0 byte offset)
+    myProgramImage = ByteMSpan{myImage}.subspan(4_KB);
+
+    // Subspan for the display RAM (@ 0x0800 offset)
+    myDisplayImage = ByteMSpan{myRAM}.subspan(0x0800);
+
+    // Create Thumbulator ARM emulator
+    myThumbEmulator = std::make_unique<Thumbulator>(
+      reinterpret_cast<uInt16*>(myImage.data()),
+      reinterpret_cast<uInt16*>(myRAM.data()),
+      U32(32_KB),
+      0x00000800,
+      0x00000808,
+      0x40001FFC,
+      devSettings ? settings.getBool("dev.thumb.trapfatal") : false,
+      devSettings ? DBL(settings.getFloat("dev.thumb.cyclefactor")) : 1.0,
+      Thumbulator::ConfigureFor::BUS,
+      this);
+  }
+
+  this->setInitialState();  // NOLINT(clang-analyzer-optin.cplusplus.VirtualCall)
+
+  myPlusROM = std::make_unique<PlusROM>(mySettings, *this);
+
+  // Determine whether we have a PlusROM cart
+  myPlusROM->initialize(ByteSpan{myImage}.first(size));
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeBUS::reset()
+{
+  if (myBUSSubtype == BUSSubtype::BUS0)
+  {
+    initializeRAM(ByteMSpan{myRAM}.subspan(3_KB, 5_KB));
+    initializeStartBank(5); // BUS0 always starts in bank 5
+  }
+  else
+  {
+    initializeRAM(ByteMSpan{myRAM}.subspan(2_KB, 6_KB));
+    initializeStartBank(6); // BUS1+ always starts in bank 6
+  }
+
+  // Update cycles to the current system cycles
+  myAudioCycles = myARMCycles = 0;
+  myFractionalClocks = 0.0;
+
+  setInitialState();
+
+  // Upon reset we switch to the startup bank
+  bank(startBank());
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeBUS::setInitialState()
+{
+  // Copy initial BUS driver to Harmony RAM
+  if (myBUSSubtype == BUSSubtype::BUS0)
+    std::copy_n(myImage.data(), 3_KB, myDriverImage.begin());
+  else
+    std::copy_n(myImage.data(), 2_KB, myDriverImage.begin());
+
+  myMusicWaveformSize.fill(27);
+
+  // Assuming mode starts out with Fast Fetch off and 3-Voice music,
+  // need to confirm with Chris
+  myMode = 0xFF;
+
+  myBankOffset = myBusOverdriveAddress =
+    mySTYZeroPageAddress = myJMPoperandAddress = 0;
+
+  myFastJumpActive = 0;
+
+  CartridgeARM::setInitialState();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeBUS::install(System& system)
+{
+  mySystem = &system;
+
+  // Map all of the accesses to call peek and poke
+  const System::PageAccess access(this, System::PageAccessType::READ);
+  for(uInt16 addr = 0x1000; addr < 0x1040; addr += System::PAGE_SIZE)
+    mySystem->setPageAccess(addr, access);
+
+  // Mirror all access in TIA and RIOT; by doing so we're taking responsibility
+  // for that address space in peek and poke below.
+  mySystem->tia().installDelegate(system, *this);
+  mySystem->m6532().installDelegate(system, *this);
+
+  // Install pages for the startup bank
+  bank(startBank());
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+inline void CartridgeBUS::updateMusicModeDataFetchers()
+{
+  // Calculate the number of cycles since the last update
+  const auto cycles = U32(mySystem->cycles() - myAudioCycles);
+  myAudioCycles = mySystem->cycles();
+
+  // Calculate the number of BUS OSC clocks since the last update
+  const double clocks = ((20000.0 * cycles) / myClockRate) + myFractionalClocks;
+  const auto wholeClocks = U32(clocks);
+  myFractionalClocks = clocks - DBL(wholeClocks);
+
+  // Let's update counters and flags of the music mode data fetchers
+  if(wholeClocks > 0)
+    for(auto x = 0UZ; x < myMusicCounters.size(); ++x)
+      myMusicCounters[x] += myMusicFrequencies[x] * wholeClocks;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+inline void CartridgeBUS::callFunction(uInt8 value)
+{
+  switch (value)
+  {
+    // Call user written ARM code (will most likely be C compiled for ARM)
+    case 254: // call with IRQ driven audio, no special handling needed at this
+              // time for Stella as ARM code "runs in zero 6507 cycles".
+    case 255: // call without IRQ driven audio
+      try {
+        auto cycles = U32(mySystem->cycles() - myARMCycles);
+
+        myARMCycles = mySystem->cycles();
+        myThumbEmulator->run(cycles, value == 254);
+        updateCycles(cycles);
+      }
+      catch(const std::runtime_error& e) {
+        if(!mySystem->autodetectMode())
+        {
+          FatalEmulationError::raise(e.what());
+        }
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 CartridgeBUS::peek(uInt16 address)
+{
+  // Is this a PlusROM?
+  if(myPlusROM->isValid())
+  {
+    uInt8 value = 0;
+    if(myPlusROM->peekHotspot(address, value))
+      return value;
+  }
+
+  if(!(address & 0x1000U))                      // Hotspots below 0x1000
+  {
+    // Check for RAM or TIA mirroring
+    const uInt16 lowAddress = address & 0x3ffU;
+    if(lowAddress & 0x80U)
+      return mySystem->m6532().peek(address);
+    else if(!(lowAddress & 0x200U))
+      return mySystem->tia().peek(address);
+  }
+  else
+  {
+    address &= 0x0FFFU;
+
+    uInt8 peekvalue = myProgramImage[myBankOffset + address];
+
+    // In debugger/bank-locked mode, we ignore all hotspots and in general
+    // anything that can change the internal state of the cart
+    if(hotspotsLocked())
+      return peekvalue;
+
+    if (myBUSSubtype == BUSSubtype::BUS3)
+    {
+      // Fast Jump only supported in BUS3
+      // implement JMP FASTJMP which fetches the destination address from stream 17
+      if (myFastJumpActive
+          && myJMPoperandAddress == address)
+      {
+        --myFastJumpActive;
+        ++myJMPoperandAddress;
+
+        uInt32 pointer = getDatastreamPointer(JUMPSTREAM);
+        const uInt8 value = myDisplayImage[pointer >> 20U];
+        pointer += 0x100000;  // always increment by 1
+        setDatastreamPointer(JUMPSTREAM, pointer);
+
+        return value;
+      }
+
+      // test for JMP FASTJUMP where FASTJUMP = $0000
+      if (BUS_STUFF_ON(myMode)
+          && peekvalue == 0x4C
+          && myProgramImage[myBankOffset + address+1] == 0
+          && myProgramImage[myBankOffset + address+2] == 0)
+      {
+        myFastJumpActive = 2; // return next two peeks from datastream 17
+        myJMPoperandAddress = address + 1;
+        return peekvalue;
+      }
+
+      myJMPoperandAddress = 0;
+    }
+
+    // save the STY's zero page address
+    if (BUS_STUFF_ON(myMode) && mySTYZeroPageAddress == address)
+      myBusOverdriveAddress =  peekvalue;
+
+    mySTYZeroPageAddress = 0;
+
+    if (address < 0x20 &&
+        (myBUSSubtype == BUSSubtype::BUS1 || myBUSSubtype == BUSSubtype::BUS2))
+    {
+      uInt8 result = 0;
+
+      // Get the index of the data fetcher that's being accessed
+      const uInt32 index = address & 0x0fU;
+      const uInt32 function = (U32(address) >> 4U) & 0x01U;
+
+      switch(function)
+      {
+        case 0x00:  // read from a datastream
+        {
+          result = readFromDatastream(index);
+          break;
+        }
+        case 0x01:  // misc read registers
+        {
+          switch(index)
+          {
+              // the following are POKE ONLY
+            case 0x00:  // 0x10 DF0WRITE
+            case 0x01:  // 0x11 DF1WRITE
+            case 0x02:  // 0x12 DF2WRITE
+            case 0x03:  // 0x13 DF3WRITE
+            case 0x04:  // 0x14 DF0PTR
+            case 0x05:  // 0x15 DF1PTR
+            case 0x06:  // 0x16 DF2PTR
+            case 0x07:  // 0x17 DF3PTR
+            case 0x09:  // 0x19 STUFFMODE
+            case 0x0a:  // 0x1A CALLFN
+              break;
+
+            case 0x08:  // 0x18 = AMPLITUDE
+            {
+              // Update the music data fetchers (counter & flag)
+              updateMusicModeDataFetchers();
+
+              // using myDisplayImage[] instead of myProgramImage[] because waveforms
+              // can be modified during runtime.
+              const uInt32 i = waveformSample(0) + waveformSample(1) + waveformSample(2);
+
+              result = U8(i);
+              break;
+            }
+
+            default:
+              break;
+          }
+          break;
+        }
+
+        default:
+          break;
+      }
+
+      return result;
+    }
+    else if (address >= 0xFEE && address <= 0xFF3 && myBUSSubtype == BUSSubtype::BUS3)
+    {
+      switch(address)
+      {
+        case 0xFEE: // AMPLITUDE
+          // Update the music data fetchers (counter & flag)
+          updateMusicModeDataFetchers();
+
+          if (DIGITAL_AUDIO_ON(myMode))
+          {
+            // retrieve packed sample (max size is 2K, or 4K of unpacked data)
+            const uInt32 sampleaddress = getSample() + (myMusicCounters[0] >> 21U);
+
+            // get sample value from ROM or RAM
+            if (sampleaddress < 0x8000)
+              peekvalue = myImage[sampleaddress];
+            else if (sampleaddress >= 0x40000000 && sampleaddress < 0x40002000) // check for RAM
+              peekvalue = myRAM[sampleaddress - 0x40000000];
+            else
+              peekvalue = 0;
+
+            // make sure current volume value is in the lower nybble
+            if ((myMusicCounters[0] & (1U<<20U)) == 0)
+              peekvalue >>= 4U;
+            peekvalue &= 0x0fU;
+          }
+          else
+          {
+            // using myDisplayImage[] instead of myProgramImage[] because waveforms
+            // can be modified during runtime.
+            const uInt32 i = waveformSample(0) + waveformSample(1) + waveformSample(2);
+
+            peekvalue = U8(i);
+          }
+          break;
+
+        case 0xFEF: // DSREAD
+          peekvalue = readFromDatastream(COMMSTREAM);
+          break;
+
+        case 0xFF0: // DSWRITE
+        case 0xFF1: // DSPTR
+        case 0xFF2: // SETMODE
+        case 0xFF3: // CALLFN
+          // these are write-only
+          break;
+
+        default:
+          break;
+      }
+    }
+    else if (myBUSSubtype == BUSSubtype::BUS0)
+    {
+      switch(address)
+      {
+        case 0x00: case 0x01: case 0x02: case 0x03:
+        case 0x04: case 0x05: case 0x06: case 0x07:
+        case 0x08: case 0x09: case 0x0a: case 0x0b:
+        case 0x0c: case 0x0d: case 0x0e: case 0x0f:
+          peekvalue = readFromDatastream(address);
+          break;
+
+        case 0xFF6:
+          // Set the current bank to the first 4k bank
+          bank(0);
+          break;
+
+        case 0x0FF7:
+          // Set the current bank to the second 4k bank
+          bank(1);
+          break;
+
+        case 0x0FF8:
+          // Set the current bank to the third 4k bank
+          bank(2);
+          break;
+
+        case 0x0FF9:
+          // Set the current bank to the fourth 4k bank
+          bank(3);
+          break;
+
+        case 0x0FFA:
+          // Set the current bank to the fifth 4k bank
+          bank(4);
+          break;
+
+        case 0x0FFB:
+          // Set the current bank to the sixth 4k bank
+          bank(5);
+          break;
+
+        default:
+          break;
+      }
+//      return result;
+    }
+    else
+    {
+      switch(address)
+      {
+        case 0xFF5:
+          // Set the current bank to the first 4k bank
+          bank(0);
+          break;
+
+        case 0x0FF6:
+          // Set the current bank to the second 4k bank
+          bank(1);
+          break;
+
+        case 0x0FF7:
+          // Set the current bank to the third 4k bank
+          bank(2);
+          break;
+
+        case 0x0FF8:
+          // Set the current bank to the fourth 4k bank
+          bank(3);
+          break;
+
+        case 0x0FF9:
+          // Set the current bank to the fifth 4k bank
+          bank(4);
+          break;
+
+        case 0x0FFA:
+          // Set the current bank to the sixth 4k bank
+          bank(5);
+          break;
+
+        case 0x0FFB:
+          // Set the current bank to the last 4k bank
+          bank(6);
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    // this might not work right for STY $84
+    if (BUS_STUFF_ON(myMode) && peekvalue == 0x84)
+      mySTYZeroPageAddress = address + 1;
+
+    return peekvalue;
+  }
+
+  return 0;  // make compiler happy
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeBUS::poke(uInt16 address, uInt8 value)
+{
+  // Is this a PlusROM?
+  if(myPlusROM->isValid() && myPlusROM->pokeHotspot(address, value))
+    return true;
+
+  if (!(address & 0x1000U))
+  {
+    value &= busOverdrive(address);
+
+    // Check for RAM or TIA mirroring
+    const uInt16 lowAddress = address & 0x3ffU;
+    if(lowAddress & 0x80U)
+      mySystem->m6532().poke(address, value);
+    else if(!(lowAddress & 0x200U))
+      mySystem->tia().poke(address, value);
+  }
+  else
+  {
+    address &= 0x0FFFU;
+
+    if (myBUSSubtype == BUSSubtype::BUS0)
+    {
+      uInt32 index = address & 0x0fU;
+      uInt32 pointer = 0, increment = 0;
+
+      switch(address)
+      {
+        case 0x10:  // DS0WRITE
+        case 0x11:  // DS1WRITE
+        case 0x12:  // DS2WRITE
+        case 0x13:  // DS3WRITE
+          // Pointers are stored as:
+          // PPPFF---
+          //
+          // P = Pointer
+          // F = Fractional
+
+          pointer = getDatastreamPointer(index);
+          myDisplayImage[ pointer >> 20U ] = value;
+          pointer += 0x100000;  // always increment by 1 when writing
+          setDatastreamPointer(index, pointer);
+          break;
+
+        case 0x1B:  // CALLFN
+          callFunction(value);
+          break;
+
+        case 0x1c:  // BUSSTUFF
+          if (value==0)
+            myMode = 0;     // lower nybble 0 = STUFFON in BUS3
+          else
+            myMode = 0x0f;  // lower nybble f = STUFFOFF in BUS3
+          break;
+
+        case 0x20: case 0x21: case 0x22: case 0x23:
+        case 0x24: case 0x25: case 0x26: case 0x27:
+        case 0x28: case 0x29: case 0x2a: case 0x2b:
+        case 0x2c: case 0x2d: case 0x2e: case 0x2f:
+          // Pointers are stored as:
+          // PPPFF---
+          //
+          // P = Pointer
+          // F = Fractional
+          pointer = getDatastreamPointer(index);
+          pointer <<=8U;
+          pointer &= 0xf0000000;
+          pointer |= (U32(value) << 20U);
+          setDatastreamPointer(index, pointer);
+          break;
+
+        case 0x30: case 0x31: case 0x32: case 0x33: // DSxINC
+        case 0x34: case 0x35: case 0x36: case 0x37:
+        case 0x38: case 0x39: case 0x3a: case 0x3b:
+        case 0x3c: case 0x3d: case 0x3e: case 0x3f:
+          // Increments are stored as
+          // ----IIFF
+          //
+          // I = Increment
+          // F = Fractional
+          increment = getDatastreamIncrement(index);
+          index <<= 8U;
+          index |= value;
+          index &= 0xffffU;
+          setDatastreamIncrement(index, increment);
+          break;
+
+
+        case 0xFF6:
+          // Set the current bank to the first 4k bank
+          bank(0);
+          break;
+
+        case 0x0FF7:
+          // Set the current bank to the second 4k bank
+          bank(1);
+          break;
+
+        case 0x0FF8:
+          // Set the current bank to the third 4k bank
+          bank(2);
+          break;
+
+        case 0x0FF9:
+          // Set the current bank to the fourth 4k bank
+          bank(3);
+          break;
+
+        case 0x0FFA:
+          // Set the current bank to the fifth 4k bank
+          bank(4);
+          break;
+
+        case 0x0FFB:
+          // Set the current bank to the sixth 4k bank
+          bank(5);
+          break;
+
+        default:
+          break;
+      }
+    }
+    else if (address >= 0xFF5)
+    {
+      // bankswitch hotspots same for BUS1+ versions
+      switch(address)
+      {
+        case 0xFF5:
+          // Set the current bank to the first 4k bank
+          bank(0);
+          break;
+
+        case 0x0FF6:
+          // Set the current bank to the second 4k bank
+          bank(1);
+          break;
+
+        case 0x0FF7:
+          // Set the current bank to the third 4k bank
+          bank(2);
+          break;
+
+        case 0x0FF8:
+          // Set the current bank to the fourth 4k bank
+          bank(3);
+          break;
+
+        case 0x0FF9:
+          // Set the current bank to the fifth 4k bank
+          bank(4);
+          break;
+
+        case 0x0FFA:
+          // Set the current bank to the sixth 4k bank
+          bank(5);
+          break;
+
+        case 0x0FFB:
+          // Set the current bank to the last 4k bank
+          bank(6);
+          break;
+
+        default:
+          break;
+      }
+    }
+    else if (myBUSSubtype == BUSSubtype::BUS3)
+    {
+      uInt32 pointer = 0;
+      switch(address)
+      {
+        case 0xFEE: // AMPLITUDE
+        case 0xFEF: // DSREAD
+          // these are read-only
+          break;
+
+        case 0xFF0: // DSWRITE
+          pointer = getDatastreamPointer(COMMSTREAM);
+          myDisplayImage[ pointer >> 20U ] = value;
+          pointer += 0x100000;  // always increment by 1 when writing
+          setDatastreamPointer(COMMSTREAM, pointer);
+          break;
+
+        case 0xFF1: // DSPTR
+          pointer = getDatastreamPointer(COMMSTREAM);
+          pointer <<=8U;
+          pointer &= 0xf0000000;
+          pointer |= (U32(value) << 20U);
+          setDatastreamPointer(COMMSTREAM, pointer);
+          break;
+
+        case 0xFF2: // SETMODE
+          myMode = value;
+          break;
+
+        case 0xFF3: // CALLFN
+          callFunction(value);
+          break;
+
+        default:
+          break;
+      }
+    }
+    else // BUS1 and BUS2
+    {
+      if ((address >= 0x10) && (address <= 0x1F))
+      {
+        // Get the index of the data fetcher that's being accessed
+        uInt32 index = address & 0x0fU;
+        uInt32 pointer = 0;
+
+        switch (index)
+        {
+          case 0x00:  // DS0WRITE
+          case 0x01:  // DS1WRITE
+          case 0x02:  // DS2WRITE
+          case 0x03:  // DS3WRITE
+            // Pointers are stored as:
+            // PPPFF---
+            //
+            // P = Pointer
+            // F = Fractional
+
+            pointer = getDatastreamPointer(index);
+            myDisplayImage[ pointer >> 20U ] = value;
+            pointer += 0x100000;  // always increment by 1 when writing
+            setDatastreamPointer(index, pointer);
+            break;
+
+          case 0x04:  // 0x14 DS0PTR
+          case 0x05:  // 0x15 DS1PTR
+          case 0x06:  // 0x16 DS2PTR
+          case 0x07:  // 0x17 DS3PTR
+            // Pointers are stored as:
+            // PPPFF---
+            //
+            // P = Pointer
+            // F = Fractional
+
+            index &= 0x03U;
+            pointer = getDatastreamPointer(index);
+            pointer <<=8U;
+            pointer &= 0xf0000000;
+            pointer |= (U32(value) << 20U);
+            setDatastreamPointer(index, pointer);
+            break;
+
+          case 0x09:  // 0x19 turn on STY ZP bus stuffing if value is 0
+            if (value==0)
+              myMode = 0;     // lower nybble 0 = STUFFON in BUS3
+            else
+              myMode = 0x0f;  // lower nybble f = STUFFOFF in BUS3
+            break;
+
+          case 0x0A:  // 0x1A CALLFUNCTION
+            callFunction(value);
+            break;
+
+          default:
+            break;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeBUS::bank(uInt16 bank, uInt16)
+{
+  if(hotspotsLocked()) return false;
+
+  // Remember what bank we're in
+  // Constrain to a valid bank so a corrupt bank value (e.g. from a
+  // tampered save state) can never offset myProgramImage[] out of bounds
+  myBankOffset = U32(bank % romBankCount()) << 12U;
+
+  // Setup the page access methods for the current bank
+  System::PageAccess access(this, System::PageAccessType::READ);
+
+  // Map Program ROM image into the system
+  for(uInt16 addr = 0x1040; addr < 0x2000; addr += System::PAGE_SIZE)
+  {
+    access.romAccessBase = &myRomAccessBase[myBankOffset + (addr & 0x0FFFU)];
+    access.romPeekCounter = &myRomAccessCounter[myBankOffset + (addr & 0x0FFFU)];
+    access.romPokeCounter = &myRomAccessCounter[myBankOffset + (addr & 0x0FFFU) + myAccessSize];
+    mySystem->setPageAccess(addr, access);
+  }
+  return myBankChanged = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt16 CartridgeBUS::getBank(uInt16) const
+{
+  return myBankOffset >> 12U;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt16 CartridgeBUS::romBankCount() const
+{
+  // BUS0's access arrays are sized for 24K (createRomAccessArrays above), so
+  // it only has 6 banks; BUS1+ use the full 28K/7-bank layout
+  return myBUSSubtype == BUSSubtype::BUS0 ? 6 : 7;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeBUS::patch(uInt16 address, uInt8 value)
+{
+  address &= 0x0FFFU;
+
+  // For now, we ignore attempts to patch the BUS address space
+  if(address >= 0x0040)
+  {
+    myProgramImage[myBankOffset + (address & 0x0FFFU)] = value;
+    return myBankChanged = true;
+  }
+  else
+    return false;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ByteSpan CartridgeBUS::getImage() const
+{
+  return myImage;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 CartridgeBUS::busOverdrive(uInt16 address)
+{
+  uInt8 overdrive = 0xff;
+
+  // only overdrive if the address matches
+  if (address == myBusOverdriveAddress)
+  {
+    const uInt8 map = address & 0x7fU;
+    if (map <= 0x24) // map TIA registers VSYNC thru HMBL inclusive
+    {
+      uInt32 alldatastreams = getAddressMap(map);
+      const uInt8 datastream = alldatastreams & 0x0fU;  // lowest nybble has the current datastream to use
+      overdrive = readFromDatastream(datastream);
+
+      // rotate map nybbles for next time
+      alldatastreams >>= 4U;
+      alldatastreams |= (U32(datastream) << 28U);
+      setAddressMap(map, alldatastreams);
+    }
+  }
+
+  myBusOverdriveAddress = 0xff; // turns off overdrive for next poke event
+
+  return overdrive;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt32 CartridgeBUS::thumbCallback(uInt8 function, uInt32 value1, uInt32 value2)
+{
+  // Functions 0-3 use value1 as a music-voice index.  It arrives directly from
+  // an ARM register, so reject out-of-range values to avoid indexing the
+  // fixed-size music arrays out of bounds.
+  if(value1 >= myMusicFrequencies.size())
+    return 0;
+
+  switch(function)
+  {
+    case 0:
+      // _SetNote - set the note/frequency
+      myMusicFrequencies[value1] = value2;
+      break;
+
+    case 1:
+      // _ResetWave - reset counter,
+      // used to make sure digital samples start from the beginning
+      myMusicCounters[value1] = 0;
+      break;
+
+    case 2:
+      // _GetWavePtr - return the counter
+      return myMusicCounters[value1];
+
+    case 3:
+      // _SetWaveSize - set size of waveform buffer
+      myMusicWaveformSize[value1] = value2;
+      break;
+
+    default:
+      break;
+  }
+
+  return 0;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 CartridgeBUS::internalRamGetValue(uInt16 addr) const
+{
+  return (addr < internalRamSize()) ? myRAM[addr] : 0;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeBUS::save(Serializer& out) const
+{
+  try
+  {
+    // Indicates which bank is currently active
+    out.putShort(myBankOffset);
+
+    // Harmony RAM
+    out.putByteArray(myRAM);
+
+    // Addresses for bus override logic
+    out.putShort(myBusOverdriveAddress);
+    out.putShort(mySTYZeroPageAddress);
+    out.putShort(myJMPoperandAddress);
+
+    // Save cycles and clocks
+    out.putLong(myAudioCycles);
+    out.putDouble(myFractionalClocks);
+    out.putLong(myARMCycles);
+
+    // Audio info
+    out.putIntArray(myMusicCounters);
+    out.putIntArray(myMusicFrequencies);
+    out.putByteArray(myMusicWaveformSize);
+
+    // Indicates current mode
+    out.putByte(myMode);
+
+    // Indicates if in the middle of a fast jump
+    out.putByte(myFastJumpActive);
+
+    CartridgeARM::save(out);
+  }
+  catch(...)
+  {
+    cerr << "ERROR: CartridgeBUS::save\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool CartridgeBUS::load(Serializer& in)
+{
+  try
+  {
+    // Indicates which bank is currently active
+    myBankOffset = in.getShort();
+
+    // Harmony RAM
+    in.getByteArray(myRAM);
+
+    // Addresses for bus override logic
+    myBusOverdriveAddress = in.getShort();
+    mySTYZeroPageAddress = in.getShort();
+    myJMPoperandAddress = in.getShort();
+
+    // Get system cycles and fractional clocks
+    myAudioCycles = in.getLong();
+    myFractionalClocks = in.getDouble();
+    myARMCycles = in.getLong();
+
+    // Audio info
+    in.getIntArray(myMusicCounters);
+    in.getIntArray(myMusicFrequencies);
+    in.getByteArray(myMusicWaveformSize);
+
+    // Indicates current mode
+    myMode = in.getByte();
+
+    // Indicates if in the middle of a fast jump
+    myFastJumpActive = in.getByte();
+
+    CartridgeARM::load(in);
+  }
+  catch(...)
+  {
+    cerr << "ERROR: CartridgeBUS::load\n";
+    return false;
+  }
+
+  // Now, go to the current bank
+  bank(myBankOffset >> 12U);
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt32 CartridgeBUS::getDatastreamPointer(uInt8 index) const
+{
+  return getUInt32(myRAM.data(), myDatastreamBase + index * 4);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeBUS::setDatastreamPointer(uInt8 index, uInt32 value)
+{
+  putUInt32(myRAM.data(), myDatastreamBase + index * 4, value);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt32 CartridgeBUS::getDatastreamIncrement(uInt8 index) const
+{
+  return getUInt32(myRAM.data(), myDatastreamIncrementBase + index * 4);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeBUS::setDatastreamIncrement(uInt8 index, uInt32 value)
+{
+  putUInt32(myRAM.data(), myDatastreamIncrementBase + index * 4, value);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt32 CartridgeBUS::getAddressMap(uInt8 index) const
+{
+  return getUInt32(myRAM.data(), myDatastreamMapBase + index * 4);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt32 CartridgeBUS::getWaveform(uInt8 index) const
+{
+  // instead of 0, 1, 2, etc. this returned
+  // 0x40000800 for 0
+  // 0x40000820 for 1
+  // 0x40000840 for 2
+  // ...
+
+  uInt32 result = getUInt32(myRAM.data(), myWaveformBase + index * 4);
+
+  result -= 0x40000800;
+
+  if (result >= 4096)
+    result = 0;
+
+  return result;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 CartridgeBUS::waveformSample(uInt8 index) const
+{
+  // myMusicCounters/myMusicWaveformSize can grow or be corrupted (via save
+  // states, or a driver that simply doesn't reset the counter often enough)
+  // beyond what getWaveform()'s own bounding accounts for. Real hardware
+  // would alias into the Harmony RAM chip rather than fault, so wrap into
+  // myDisplayImage rather than fabricate a value; the shift is also
+  // clamped since 32+ is UB.
+  const uInt8 shift = std::min<uInt8>(myMusicWaveformSize[index], 31);
+  const uInt64 idx = U64(getWaveform(index)) + (myMusicCounters[index] >> shift);
+  return myDisplayImage[idx % myDisplayImage.size()];
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt32 CartridgeBUS::getSample()
+{
+  return getUInt32(myRAM.data(), myWaveformBase);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt32 CartridgeBUS::getWaveformSize(uInt8 index) const
+{
+  return myMusicWaveformSize[index];
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeBUS::setAddressMap(uInt8 index, uInt32 value)
+{
+  putUInt32(myRAM.data(), myDatastreamMapBase + index * 4, value);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 CartridgeBUS::readFromDatastream(uInt8 index)
+{
+  // Pointers are stored as:
+  // PPPFF---
+  //
+  // Increments are stored as
+  // ----IIFF
+  //
+  // P = Pointer
+  // I = Increment
+  // F = Fractional
+
+  uInt32 pointer = getDatastreamPointer(index);
+  const uInt16 increment = getDatastreamIncrement(index);
+  const uInt8 value = myDisplayImage[pointer >> 20U];
+  pointer += (increment << 12U);
+  setDatastreamPointer(index, pointer);
+  return value;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// params:
+//  - searchValue: uInt32 value to search for; assumes it is on a DWORD boundary
+//
+// returns:
+//  - offset in image where value was found
+//  - 0xFFFFFFFF if not found
+uInt32 CartridgeBUS::scanBUSDriver(uInt32 searchValue)
+{
+  // original BUS driver is 3K in size. Later BUS drivers are 2K in size.
+  for (int i = 0; i < 3072; i += 4)
+    if (getUInt32(myImage.data(), i) == searchValue)
+      return i;
+
+  return 0xFFFFFFFF;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void CartridgeBUS::setupVersion()
+{
+  // 3 versions of the BUS driver have been found. Location of the BUS
+  // strings are in a different location for each.
+
+  // get offset of BUS ID
+  const uInt32 busOffset = scanBUSDriver(0x00535542);
+
+  switch(busOffset)
+  {
+    case 0x7f4: // draconian_20161102.bin
+      myBUSSubtype = BUSSubtype::BUS1;
+      myDatastreamBase = 0x06E0;
+      myDatastreamIncrementBase = 0x0720;
+      myDatastreamMapBase = 0x0760;
+      myWaveformBase = 0x07F4;
+      break;
+
+    case 0x778: // 128bus_20170120.bin, 128chronocolour_20170101.bin, parrot_20161231_NTSC.bin
+      myBUSSubtype = BUSSubtype::BUS2;
+      myDatastreamBase = 0x06E0;
+      myDatastreamIncrementBase = 0x0720;
+      myDatastreamMapBase = 0x0760;
+      myWaveformBase = 0x07F4;
+      break;
+
+    case 0x770: //  rpg_20170616_NTSC.bin newest
+      myBUSSubtype = BUSSubtype::BUS3;
+      myDatastreamBase = 0x06D8;
+      myDatastreamIncrementBase = 0x0720;
+      myDatastreamMapBase = 0x0760;
+      myWaveformBase = 0x07F4;
+      break;
+
+    default: // case 0xbf8: // original BUS driver was 3K in size
+      myBUSSubtype = BUSSubtype::BUS0;
+//       unsupported
+      myDatastreamBase = 0x0AE0;
+      myDatastreamIncrementBase = 0x0B20;
+      myDatastreamMapBase = 0x0B64;
+//      myWaveformBase = 0x07F4;
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+string CartridgeBUS::name() const
+{
+  switch(myBUSSubtype)
+  {
+    case BUSSubtype::BUS0:  return "CartridgeBUS0";
+    case BUSSubtype::BUS1:  return "CartridgeBUS1";
+    case BUSSubtype::BUS2:  return "CartridgeBUS2";
+    case BUSSubtype::BUS3:  return "CartridgeBUS3";
+    default:                return "Unsupported BUS";
+  }
+}
+
+#ifdef DEBUGGER_SUPPORT
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  CartDebugWidget* CartridgeBUS::debugWidget(GuiObject* boss, const GUI::Font& lfont,
+                               const GUI::Font& nfont)
+  {
+    return new CartridgeBUSWidget(boss, lfont, nfont, *this);
+  }
+
+  CartDebugWidget* CartridgeBUS::infoWidget(GuiObject* boss, const GUI::Font& lfont,
+                                             const GUI::Font& nfont)
+  {
+    return new CartridgeBUSInfoWidget(boss, lfont, nfont, *this);
+  }
+#endif

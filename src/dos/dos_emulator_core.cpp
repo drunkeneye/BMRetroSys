@@ -19,6 +19,10 @@
 extern "C" {
 #include "third_party/common/circle.h"
 #include "third_party/common/ui.h"
+// zip_wipe_machine_caches lives in menu.c; menu.h itself cannot be
+// included here (it pulls emux_api.h, whose RS232 enums clash with
+// viceoptions.h in C++, same reason as above).
+void zip_wipe_machine_caches(void);
 
 // Defined in dos_bridge.cpp (emux_api.h cannot be included here: it
 // clashes with viceoptions.h's RS232 enums in C++).
@@ -81,6 +85,11 @@ Bitu run_guest_slice(void) {
       // outside any CPU batch, reboot throw (if any) swallowed inside,
       // before the reset events reconstruct the machine around it.
       bmx::dos::perf_apply_pending_reset();
+      // Every reboot (menu soft/hard, guest triple-fault) invalidates the
+      // previous session: mounts die with it, so drop the extracted-zip
+      // caches now. The next autostart re-extracts fresh instead of
+      // tripping over stale files.
+      zip_wipe_machine_caches();
       DispatchVMEvent(VM_EVENT_RESET);
       DispatchVMEvent(VM_EVENT_RESET_END);
       debug_log("run_guest_slice: reset re-dispatched");

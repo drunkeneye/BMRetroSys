@@ -1,0 +1,132 @@
+/*
+    ZEsarUX  ZX Second-Emulator And Released for UniX
+    Copyright (C) 2013 Cesar Hernandez Bano
+
+    This file is part of ZEsarUX.
+
+    ZEsarUX is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+*/
+
+#ifndef BASECONF_H
+#define BASECONF_H
+
+#include "cpu.h"
+
+#define BASECONF_DISPLAY_WIDTH 640
+#define BASECONF_DISPLAY_HEIGHT 400
+
+
+
+#define BASECONF_LEFT_BORDER_NO_ZOOM 40
+#define BASECONF_RIGHT_BORDER_NO_ZOOM 40
+#define BASECONF_TOP_BORDER_NO_ZOOM 88
+#define BASECONF_BOTTOM_BORDER_NO_ZOOM 88
+
+#define BASECONF_LEFT_BORDER BASECONF_LEFT_BORDER_NO_ZOOM*zoom_x
+#define BASECONF_RIGHT_BORDER BASECONF_RIGHT_BORDER_NO_ZOOM*zoom_x
+#define BASECONF_TOP_BORDER BASECONF_TOP_BORDER_NO_ZOOM*zoom_y
+#define BASECONF_BOTTOM_BORDER BASECONF_BOTTOM_BORDER_NO_ZOOM*zoom_y
+
+
+#define BASECONF_FMAPS_SIZE 1024
+#define BASECONF_ROM_PAGES 32
+#define BASECONF_RAM_PAGES 256
+
+//#define BASECONF_MAX_SPRITES 85
+
+extern z80_byte baseconf_last_port_eff7;
+extern z80_byte baseconf_last_port_77;
+extern z80_byte baseconf_shadow_mode_port_77;
+//extern z80_byte baseconf_last_port_dff7;
+//extern z80_byte baseconf_nvram[];
+
+//extern void baseconf_write_af_port(z80_byte puerto_h,z80_byte value);
+//extern z80_byte baseconf_get_af_port(z80_byte index);
+extern void baseconf_init_memory_tables(void);
+extern void baseconf_set_memory_pages(void);
+extern z80_byte *baseconf_memory_paged[];
+extern z80_byte *baseconf_rom_mem_table[];
+extern z80_byte *baseconf_ram_mem_table[];
+//extern z80_byte baseconf_af_ports[];
+
+//extern z80_byte baseconf_fmaps[];
+
+//extern int temp_baseconf_in_system_rom_flag;
+
+extern void baseconf_reset_cpu(void);
+extern void baseconf_hard_reset(void);
+
+extern void lee_byte_evo_aux(z80_int direccion);
+
+extern z80_byte baseconf_memory_segments[];
+extern z80_byte baseconf_memory_segments_type[];
+
+extern void baseconf_out_port(z80_int puerto,z80_byte valor);
+extern z80_byte baseconf_read_config_port(z80_byte puerto_h);
+extern z80_byte baseconf_read_extended_dos_port(z80_byte puerto_l);
+extern z80_byte baseconf_read_cmos(void);
+extern void baseconf_write_cmos(z80_byte valor);
+extern int baseconf_ide_port(z80_byte puerto_l);
+extern z80_byte baseconf_ide_read(z80_byte puerto_l);
+extern void baseconf_ide_write(z80_byte puerto_l,z80_byte valor);
+
+extern char *baseconf_get_video_mode_string(void);
+
+extern int baseconf_sd_enabled;
+
+extern int baseconf_sd_cs;
+
+extern z80_byte baseconf_last_port_bf;
+
+/* Ultimos valores escritos en los puertos propios de BaseConf. */
+extern z80_byte baseconf_last_port_bd;
+extern z80_byte baseconf_last_port_be;
+extern z80_byte baseconf_last_port_ff;
+extern z80_byte baseconf_last_port_57;
+extern z80_byte baseconf_last_port_sd_77;
+extern z80_byte baseconf_last_port_dff7;
+extern z80_byte baseconf_last_port_bff7;
+extern z80_byte baseconf_last_port_7ffd;
+extern z80_byte baseconf_last_port_extended_dos[4];
+extern z80_byte baseconf_last_port_ff7;
+extern z80_byte baseconf_last_port_7f7;
+extern z80_byte baseconf_last_port_bf7;
+
+extern int baseconf_shadow_ports_available(void);
+extern void baseconf_write_memory_aux(z80_int direccion,z80_byte valor);
+extern void baseconf_pre_opcode_fetch(z80_int direccion);
+extern void baseconf_post_opcode_fetch(z80_byte *opcode);
+extern void baseconf_handle_nmi(void);
+extern int baseconf_memory_write_allowed(z80_int direccion);
+extern int baseconf_text_mode_active(void);
+extern z80_byte baseconf_get_video_mode(void);
+extern z80_int baseconf_get_palette_entry(z80_byte indice);
+extern z80_byte baseconf_get_border_colour(void);
+extern void baseconf_set_border_colour(z80_int puerto,z80_byte value);
+extern void screen_baseconf_refresca_alco_mode(void);
+extern void screen_baseconf_refresca_ega_mode(void);
+extern void screen_baseconf_refresca_atm_multicolor_mode(void);
+extern void screen_baseconf_refresca_atm_text_mode(void);
+extern void screen_baseconf_refresca_hw_multicolor_mode(void);
+extern void screen_baseconf_refresca_text_mode(void);
+extern void baseconf_store_scanline_rainbow_border(void);
+extern void baseconf_store_scanline_rainbow_display(void);
+
+
+extern void baseconf_refresca_pantalla(void);
+
+
+
+#endif

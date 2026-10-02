@@ -1,0 +1,2551 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#include "TIA.hxx"
+#include "M6502.hxx"
+#include "M6532.hxx"
+#include "Control.hxx"
+#include "DelayQueueIteratorImpl.hxx"
+#include "TIAConstants.hxx"
+#include "AudioQueue.hxx"
+#include "DispatchResult.hxx"
+#include "PhosphorHandler.hxx"
+#include "Base.hxx"
+
+namespace {
+  // Per-register color-clock delays applied when a TIA write is pushed onto
+  // the DelayQueue. Some games rely on these on real hardware (e.g. GRP0/1
+  // takes effect one clock after the write); see TIA::poke for which writes
+  // route through the queue.
+  enum Delay: uInt8 {
+    hmove = 6,
+    pf = 2,
+    grp = 1,
+    shufflePlayer = 1,
+    shuffleBall = 1,
+    hmp = 2,
+    hmm = 2,
+    hmbl = 2,
+    hmclr = 2,
+    refp = 1,
+    enabl = 1,
+    enam = 1,
+    vblank = 1
+  };
+
+  // RESPx/RESMx/RESBL counter targets — depend on whether the strobe lands
+  // in late HBLANK, regular HBLANK, or the visible region (see TIA::resxCounter).
+  enum ResxCounter: uInt8 {
+    hblank = 159,
+    lateHblank = 158,
+    frame = 157
+  };
+
+  template<Bitmask::Type T>
+  constexpr bool bmBool(T v) noexcept { return Bitmask::Enum{v}.any(); }
+}  // namespace
+
+// Flags the last possible RESx write during extended HBLANK — CPU cycle 75.
+// Selects ResxCounter::lateHblank (158) vs ResxCounter::hblank (159) so that
+// the strobe lands on the correct sprite counter relative to the HMOVE
+// movement clocks (MOTCK).
+static constexpr uInt8 resxLateHblankThreshold = 73;
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+TIA::TIA(ConsoleIO& console, const ConsoleTimingProvider& timingProvider,
+         Settings& settings, const onPhosphorCallback& callback)
+  : myConsole{console},
+    myTimingProvider{timingProvider},
+    mySettings{settings},
+    // Each sprite's "disabled" collision mask is constructed as
+    //   ~CollisionMask::self & ~CollisionMask::VISIBLE
+    // so that when the sprite is silent it contributes ones everywhere
+    // except its own pair bits (VISIBLE, the visibility latch, is also
+    // cleared). See the CollisionMask enum in TIAConstants.hxx.
+    myPlayfield{~CollisionMask::playfield & ~CollisionMask::VISIBLE},
+    myMissile0{~CollisionMask::missile0 & ~CollisionMask::VISIBLE},
+    myMissile1{~CollisionMask::missile1 & ~CollisionMask::VISIBLE},
+    myPlayer0{~CollisionMask::player0 & ~CollisionMask::VISIBLE},
+    myPlayer1{~CollisionMask::player1 & ~CollisionMask::VISIBLE},
+    myBall{~CollisionMask::ball & ~CollisionMask::VISIBLE},
+    myPhosphorCallback{callback}
+{
+  myBackground.setTIA(this);
+  myPlayfield.setTIA(this);
+  myPlayer0.setTIA(this);
+  myPlayer1.setTIA(this);
+  myMissile0.setTIA(this);
+  myMissile1.setTIA(this);
+  myBall.setTIA(this);
+
+  initialize();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setFrameManager(AbstractFrameManager* frameManager, bool layoutDetector)
+{
+  clearFrameManager();
+
+  myFrameManager = frameManager;
+  myIsLayoutDetector = layoutDetector;
+
+  myFrameManager->setHandlers(
+    [this] { onFrameStart();    },
+    [this] { onFrameComplete(); }
+  );
+
+  myFrameManager->enableJitter(myEnableJitter);
+  myFrameManager->setJitterSensitivity(myJitterSensitivity);
+  myFrameManager->setJitterRecovery(myJitterRecovery);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setAudioQueue(const shared_ptr<AudioQueue>& queue)
+{
+  myAudio.setAudioQueue(queue);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setAudioRewindMode(bool enable)
+{
+  myAudio.setAudioRewindMode(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::clearFrameManager()
+{
+  if (!myFrameManager) return;
+
+  myFrameManager->clearHandlers();
+
+  myFrameManager = nullptr;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::initialize()
+{
+  myHctr = 0;
+  myMovementInProgress = false;
+  myExtendedHblank = false;
+  myMovementClock = 0;
+  myPriority = Priority::normal;
+  myHstate = HState::blank;
+  myCollisionMask = CollisionMask::NONE;
+  myLinesSinceChange = 0;
+  myColorLossEnabled = myColorLossActive = false;
+  myColorHBlank = 0;
+  myLastCycle = 0;
+  mySubClock = 0;
+  myHctrDelta = 0;
+  myXAtRenderingStart = 0;
+
+  myShadowRegisters.fill(0);
+  for (const auto reg: {HMP0, HMP1, HMM0, HMM1, HMBL})
+    myShadowRegisters[reg] = 0x80;
+
+  myBackground.reset();
+  myPlayfield.reset();
+  myMissile0.reset();
+  myMissile1.reset();
+  myPlayer0.reset();
+  myPlayer1.reset();
+  myBall.reset();
+
+  myInput0.reset();
+  myInput1.reset();
+
+  myAudio.reset();
+
+  myTimestamp = 0;
+  for (AnalogReadout& analogReadout : myAnalogReadouts)
+    analogReadout.reset(myTimestamp);
+  myLastAnalogConnections.fill(AnalogReadout::disconnect());
+
+  myDelayQueue.reset();
+
+#ifdef DEBUGGER_SUPPORT
+  myCyclesAtFrameStart = 0;
+  myFrameWsyncCycles = 0;
+#endif
+
+  if (myFrameManager)
+    myFrameManager->reset();
+
+  myFrontBufferScanlines = myFrameBufferScanlines = 0;
+
+  myFramesSinceLastRender = 0;
+
+  // Blank the various framebuffers; they may contain graphical garbage
+  myBackBuffer.fill(0);
+  myFrontBuffer.fill(0);
+  myFramebuffer.fill(0);
+
+  myCurrentRowPtr = myBackBuffer.data();
+
+  // Prepare variables for auto-phosphor
+  myPosP0 = {};
+  myPosP1 = {};
+  myPosM0 = {};
+  myPosM1 = {};
+  myPosBL = {};
+  myPatPF = {};
+  myFrameEnd = 0;
+
+  applyDeveloperSettings();
+
+  // Must be done last, after all other items have reset
+  const bool devSettings = mySettings.getBool("dev.settings");
+  setFixedColorPalette(mySettings.getString("tia.dbgcolors"));
+  enableFixedColors(
+    mySettings.getBool(devSettings ? "dev.debugcolors" : "plr.debugcolors"));
+  // Auto-phosphor settings:
+  const string mode = mySettings.getString(PhosphorHandler::SETTING_MODE);
+  myAutoPhosphorAutoOn = mode == PhosphorHandler::VALUE_AUTO_ON;
+  myAutoPhosphorEnabled = myAutoPhosphorAutoOn || mode == PhosphorHandler::VALUE_AUTO;
+  myAutoPhosphorActive = false;
+  myFlickerCount = 0;
+
+#ifdef DEBUGGER_SUPPORT
+  createAccessArrays();
+#endif  // DEBUGGER_SUPPORT
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::reset()
+{
+  // Simply call initialize(); mostly to get around calling a virtual method
+  // from the constructor
+  initialize();
+
+  if(myRandomize && !mySystem->autodetectMode())
+  {
+    for(uInt32 i = 0; i < 0x4000; ++i)
+    {
+      const uInt16 address = mySystem->randGenerator().next() & 0x3FU;
+
+      if(address <= 0x2F)
+      {
+        poke(address, mySystem->randGenerator().next());
+        cycle(1 + (mySystem->randGenerator().next() & 7U)); // process delay queue
+      }
+    }
+    cycle(76 * 3); // just to be sure :)
+    myTimestamp = 0;
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::install(System& system)
+{
+  installDelegate(system, *this);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::installDelegate(System& system, Device& device)
+{
+  // Remember which system I'm installed in
+  mySystem = &system;
+
+  // All accesses are to the given device
+  const System::PageAccess access(&device, System::PageAccessType::READWRITE);
+
+  // Map all peek/poke to mirrors of TIA address space to this class
+  // That is, all mirrors of ($00 - $3F) in the lower 4K of the 2600
+  // address space are mapped here
+  for(uInt16 addr = 0; addr < 0x1000; addr += System::PAGE_SIZE)
+    if((addr & TIA_BIT) == 0x0000)
+      mySystem->setPageAccess(addr, access);
+
+  mySystem->m6502().setOnHaltCallback([this] { onHalt(); });
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::save(Serializer& out) const
+{
+  try
+  {
+    if(!myDelayQueue.save(out))    return false;
+    if(!myFrameManager->save(out)) return false;
+
+    if(!myBackground.save(out)) return false;
+    if(!myPlayfield.save(out))  return false;
+    if(!myMissile0.save(out))   return false;
+    if(!myMissile1.save(out))   return false;
+    if(!myPlayer0.save(out))    return false;
+    if(!myPlayer1.save(out))    return false;
+    if(!myBall.save(out))       return false;
+    if(!myAudio.save(out))      return false;
+
+    for (const AnalogReadout& analogReadout: myAnalogReadouts)
+      if(!analogReadout.save(out)) return false;
+
+    // Cache of the last analog connection pushed to each readout; preserved so
+    // the change-detection in updateAnalogReadout() stays consistent on reload
+    for(const auto& conn: myLastAnalogConnections)
+      if(!conn.save(out)) return false;
+
+    if(!myInput0.save(out)) return false;
+    if(!myInput1.save(out)) return false;
+
+    out.putInt(std::to_underlying(myHstate));
+
+    out.putInt(myHctr);
+    out.putInt(myHctrDelta);
+    out.putInt(myXAtRenderingStart);
+
+    out.putShort(Bitmask::to_underlying(myCollisionMask));
+
+    out.putInt(myMovementClock);
+    out.putBool(myMovementInProgress);
+    out.putBool(myExtendedHblank);
+
+    out.putInt(myLinesSinceChange);
+
+    out.putInt(std::to_underlying(myPriority));
+
+    out.putByte(mySubClock);
+    out.putLong(myLastCycle);
+
+    out.putByte(Bitmask::to_underlying(mySpriteEnabledBits));
+    out.putByte(Bitmask::to_underlying(myCollisionsEnabledBits));
+
+    out.putByte(myColorHBlank);
+
+    out.putLong(myTimestamp);
+
+    out.putByteArray(myShadowRegisters);
+
+  #ifdef DEBUGGER_SUPPORT
+    out.putLong(myCyclesAtFrameStart);
+    out.putLong(myFrameWsyncCycles);
+  #endif
+
+    out.putInt(myFrameBufferScanlines);
+    out.putInt(myFrontBufferScanlines);
+
+    out.putByte(myPFBitsDelay);
+    out.putByte(myPFColorDelay);
+    out.putByte(myBKColorDelay);
+    out.putByte(myPlSwapDelay);
+
+    // Dump-ports state; dumpPortsCycles() (used by e.g. QuadTari to pick a
+    // sub-controller) is measured relative to myDumpPortsCycles, so both must
+    // be preserved across save/load
+    out.putBool(myArePortsDumped);
+    out.putLong(myDumpPortsCycles);
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA::save\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::load(Serializer& in)
+{
+  try
+  {
+    if(!myDelayQueue.load(in))   return false;
+    if(!myFrameManager->load(in)) return false;
+
+    if(!myBackground.load(in)) return false;
+    if(!myPlayfield.load(in))  return false;
+    if(!myMissile0.load(in))   return false;
+    if(!myMissile1.load(in))   return false;
+    if(!myPlayer0.load(in))    return false;
+    if(!myPlayer1.load(in))    return false;
+    if(!myBall.load(in))       return false;
+    if(!myAudio.load(in))       return false;
+
+    for (AnalogReadout& analogReadout : myAnalogReadouts)
+      if(!analogReadout.load(in)) return false;
+
+    for(auto& conn: myLastAnalogConnections)
+      if(!conn.load(in)) return false;
+
+    if(!myInput0.load(in)) return false;
+    if(!myInput1.load(in)) return false;
+
+    myHstate = static_cast<HState>(in.getInt());
+
+    myHctr = in.getInt();
+    myHctrDelta = in.getInt();
+    myXAtRenderingStart = in.getInt();
+
+    myCollisionMask = Bitmask::from_underlying<CollisionMask>(in.getShort());
+
+    myMovementClock = in.getInt();
+    myMovementInProgress = in.getBool();
+    myExtendedHblank = in.getBool();
+
+    myLinesSinceChange = in.getInt();
+
+    myPriority = static_cast<Priority>(in.getInt());
+
+    mySubClock = in.getByte();
+    myLastCycle = in.getLong();
+
+    mySpriteEnabledBits = Bitmask::from_underlying<TIABit>(in.getByte());
+    myCollisionsEnabledBits = Bitmask::from_underlying<TIABit>(in.getByte());
+
+    myColorHBlank = in.getByte();
+
+    myTimestamp = in.getLong();
+
+    in.getByteArray(myShadowRegisters);
+
+  #ifdef DEBUGGER_SUPPORT
+    myCyclesAtFrameStart = in.getLong();
+    myFrameWsyncCycles = in.getLong();
+  #endif
+
+    myFrameBufferScanlines = in.getInt();
+    myFrontBufferScanlines = in.getInt();
+
+    myPFBitsDelay = in.getByte();
+    myPFColorDelay = in.getByte();
+    myBKColorDelay = in.getByte();
+    myPlSwapDelay = in.getByte();
+
+    myArePortsDumped = in.getBool();
+    myDumpPortsCycles = in.getLong();
+
+    // Re-apply dev settings
+    applyDeveloperSettings();
+
+    // myCurrentRowPtr is derived state not stored in the save file; recompute
+    // it from the restored y so renderPixel() writes to the correct scanline,
+    // including when the debugger saves and loads state mid-scanline.  Clamp y
+    // to the buffer height so a corrupt save file can't push the row pointer
+    // (and thus renderPixel's writes) past the end of myBackBuffer
+    const uInt32 y = std::min(myFrameManager->getY(),
+                              TIAConstants::frameBufferHeight - 1);
+    myCurrentRowPtr = myBackBuffer.data() + SZT(y) * TIAConstants::H_PIXEL;
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA::load\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::bindToControllers()
+{
+  myConsole.leftController().setOnAnalogPinUpdateCallback(
+    [this] (Controller::AnalogPin pin) {
+      updateEmulation();
+
+      switch (pin) {
+        using enum Controller::AnalogPin;
+        case Five:
+          updateAnalogReadout(0);
+          break;
+
+        case Nine:
+          updateAnalogReadout(1);
+          break;
+
+        default:
+          break;  // Not supposed to get here
+      }
+    }
+  );
+
+  myConsole.rightController().setOnAnalogPinUpdateCallback(
+    [this] (Controller::AnalogPin pin) {
+      updateEmulation();
+
+      switch (pin) {
+        using enum Controller::AnalogPin;
+        case Five:
+          updateAnalogReadout(2);
+          break;
+
+        case Nine:
+          updateAnalogReadout(3);
+          break;
+
+        default:
+          break;  // Not supposed to get here
+      }
+    }
+  );
+
+  for (uInt8 i = 0; i < 4; ++i)
+    updateAnalogReadout(i);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::peek(uInt16 address)
+{
+  // Catch the TIA simulation up to the current system clock so the read
+  // observes correct collision/INPT state.
+  updateEmulation();
+
+  // Only the low 4 bits matter: 8 collision latches (CX*) + 6 input ports
+  // (INPT0-5). Most CX* registers use both D7 and D6 (two pairs encoded in
+  // one register); CXBLPF and INPT* only use D7.
+  uInt8 result = 0b0000000;
+
+  switch (address & 0x0FU) {
+    case CXM0P:
+      result = collCXM0P() & 0b11000000U;
+      break;
+
+    case CXM1P:
+      result = collCXM1P() & 0b11000000U;
+      break;
+
+    case CXP0FB:
+      result = collCXP0FB() & 0b11000000U;
+      break;
+
+    case CXP1FB:
+      result = collCXP1FB() & 0b11000000U;
+      break;
+
+    case CXM0FB:
+      result = collCXM0FB() & 0b11000000U;
+      break;
+
+    case CXM1FB:
+      result = collCXM1FB() & 0b11000000U;
+      break;
+
+    case CXPPMM:
+      result = collCXPPMM() & 0b11000000U;
+      break;
+
+    case CXBLPF:
+      result = collCXBLPF() & 0b10000000U;
+      break;
+
+    case INPT0:
+      updateAnalogReadout(0);
+      result = myAnalogReadouts[0].inpt(myTimestamp) & 0b10000000U;
+      break;
+
+    case INPT1:
+      updateAnalogReadout(1);
+      result = myAnalogReadouts[1].inpt(myTimestamp) & 0b10000000U;
+      break;
+
+    case INPT2:
+      updateAnalogReadout(2);
+      result = myAnalogReadouts[2].inpt(myTimestamp) & 0b10000000U;
+      break;
+
+    case INPT3:
+      updateAnalogReadout(3);
+      result = myAnalogReadouts[3].inpt(myTimestamp) & 0b10000000U;
+      break;
+
+    case INPT4:
+      result = myInput0.inpt(!myConsole.leftController().read(Controller::DigitalPin::Six))
+          & 0b10000000U;
+      break;
+
+    case INPT5:
+      result = myInput1.inpt(!myConsole.rightController().read(Controller::DigitalPin::Six))
+          & 0b10000000U;
+      break;
+
+    default:
+      break;
+  }
+
+  // Bits D5..D0 are floating bus on real hardware: the TIA never drives
+  // them so whatever the CPU put on the bus last cycle (or random noise
+  // on real chips with weaker pull-downs) shows up. The 'tiapinsdriven'
+  // setting picks random noise to surface games that read these bits.
+  return result | ((!myTIAPinsDriven ? mySystem->getDataBusState() :
+    mySystem->randGenerator().next()) & 0b00111111U);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::poke(uInt16 address, uInt8 value)
+{
+  // Catch the TIA up to the current system clock so the write lands on
+  // the correct color clock.
+  updateEmulation();
+
+  // Each write falls into one of three buckets:
+  //   - Strobes whose effect must be immediate (WSYNC/RSYNC/RESxx/CXCLR);
+  //     these call flushLineCache() if they change rendered state.
+  //   - State registers that change visible output but take effect
+  //     immediately (CTRLPF/COLUxx/NUSIZx/VDELxx); the per-sprite setColor
+  //     etc. flush the line cache only when actually needed.
+  //   - Pipelined writes (PFx/GRPx/ENAxx/HMxx/HMOVE/REFPx/VBLANK/...) that
+  //     go through myDelayQueue with a per-register color-clock delay
+  //     defined in the Delay enum above; delayedWrite() dispatches them.
+  address &= 0x3FU;
+
+  switch (address)
+  {
+    case WSYNC:
+      mySystem->m6502().requestHalt();
+      break;
+
+    case RSYNC:
+      // RSYNC rewinds the horizontal counter and zeroes the rest of the
+      // line — anything cached for this line is no longer correct.
+      flushLineCache();
+      applyRsync();
+      myShadowRegisters[address] = value;
+      break;
+
+    case VSYNC:
+      myFrameManager->setVsync(value & 0x02U, myTimestamp / 3);
+      myShadowRegisters[address] = value;
+      break;
+
+    case VBLANK:
+      myInput0.vblank(value);
+      myInput1.vblank(value);
+
+      for (AnalogReadout& analogReadout : myAnalogReadouts)
+        analogReadout.vblank(value, myTimestamp);
+      updateDumpPorts(value);
+
+      myDelayQueue.push(VBLANK, value, Delay::vblank);
+      break;
+
+    case AUDV0:
+    {
+      myAudio.channel0().audv(value);
+      myShadowRegisters[address] = value;
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::AUD);
+    #endif
+      break;
+    }
+
+    case AUDV1:
+    {
+      myAudio.channel1().audv(value);
+      myShadowRegisters[address] = value;
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::AUD);
+    #endif
+      break;
+    }
+
+    case AUDF0:
+    {
+      myAudio.channel0().audf(value);
+      myShadowRegisters[address] = value;
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::AUD);
+    #endif
+      break;
+    }
+
+    case AUDF1:
+    {
+      myAudio.channel1().audf(value);
+      myShadowRegisters[address] = value;
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::AUD);
+    #endif
+      break;
+    }
+
+    case AUDC0:
+    {
+      myAudio.channel0().audc(value);
+      myShadowRegisters[address] = value;
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::AUD);
+    #endif
+      break;
+    }
+
+    case AUDC1:
+    {
+      myAudio.channel1().audc(value);
+      myShadowRegisters[address] = value;
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::AUD);
+    #endif
+      break;
+    }
+
+    case HMOVE:
+      myDelayQueue.push(HMOVE, value, Delay::hmove);
+      break;
+
+    case COLUBK:
+    {
+      value &= 0xFEU;
+      if(myBKColorDelay)
+        myDelayQueue.push(COLUBK, value, 1);
+      else
+      {
+        myBackground.setColor(value);
+        myShadowRegisters[address] = value;
+      }
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::BCOL);
+    #endif
+      break;
+    }
+
+    case COLUP0:
+    {
+      value &= 0xFEU;
+      myPlayfield.setColorP0(value);
+      myMissile0.setColor(value);
+      myPlayer0.setColor(value);
+      myShadowRegisters[address] = value;
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::COL);
+    #endif
+      break;
+    }
+
+    case COLUP1:
+    {
+      value &= 0xFEU;
+      myPlayfield.setColorP1(value);
+      myMissile1.setColor(value);
+      myPlayer1.setColor(value);
+      myShadowRegisters[address] = value;
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::COL);
+    #endif
+      break;
+    }
+
+    case CTRLPF:
+      // Priority encoder mode, playfield reflect / color mode, and ball
+      // width can all change here — any of these may alter pixels already
+      // rendered on the current line.
+      flushLineCache();
+      myPriority = (value & 0x04U) ? Priority::pfp :
+                   (value & 0x02U) ? Priority::score : Priority::normal;
+      myPlayfield.ctrlpf(value);
+      myBall.ctrlpf(value);
+      myShadowRegisters[address] = value;
+      break;
+
+    case COLUPF:
+    {
+      // Playfield/ball color may have changed mid-line. (Could be tightened
+      // to "only when value differs and PF/BL is emitting" like the
+      // per-sprite setColor guards, but isn't.)
+      flushLineCache();
+      value &= 0xFEU;
+      if(myPFColorDelay)
+        myDelayQueue.push(COLUPF, value, 1);
+      else
+      {
+        myPlayfield.setColor(value);
+        myBall.setColor(value);
+        myShadowRegisters[address] = value;
+      }
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::PCOL);
+    #endif
+      break;
+    }
+
+    case PF0:
+    {
+      myDelayQueue.push(PF0, value, myPFBitsDelay);
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::PGFX);
+    #endif
+      break;
+    }
+
+    case PF1:
+    {
+      myDelayQueue.push(PF1, value, myPFBitsDelay);
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::PGFX);
+    #endif
+      break;
+    }
+
+    case PF2:
+    {
+      myDelayQueue.push(PF2, value, myPFBitsDelay);
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::PGFX);
+    #endif
+      break;
+    }
+
+    case ENAM0:
+      myDelayQueue.push(ENAM0, value, Delay::enam);
+      break;
+
+    case ENAM1:
+      myDelayQueue.push(ENAM1, value, Delay::enam);
+      break;
+
+    case RESM0:
+      // Missile position counter is being reset — anything already drawn
+      // for this line was drawn with the old counter.
+      flushLineCache();
+      myMissile0.resm(resxCounter(), myHstate == HState::blank,
+        myHstate == HState::blank && myMovementInProgress && myMovementClock == 0);
+      myShadowRegisters[address] = value;
+      break;
+
+    case RESM1:
+      // Same as RESM0 — counter reset invalidates the cached line.
+      flushLineCache();
+      myMissile1.resm(resxCounter(), myHstate == HState::blank,
+        myHstate == HState::blank && myMovementInProgress && myMovementClock == 0);
+      myShadowRegisters[address] = value;
+      break;
+
+    case RESMP0:
+      myMissile0.resmp(value);
+      myShadowRegisters[address] = value;
+      break;
+
+    case RESMP1:
+      myMissile1.resmp(value);
+      myShadowRegisters[address] = value;
+      break;
+
+    case NUSIZ0:
+      // Player copy count / missile width / decode table changing mid-line
+      // can affect every pixel since the last decode trigger.
+      flushLineCache();
+      myMissile0.nusiz(value);
+      myPlayer0.nusiz(value, myHstate == HState::blank);
+      myShadowRegisters[address] = value;
+      break;
+
+    case NUSIZ1:
+      // Same as NUSIZ0 — copy count / size change invalidates the line.
+      flushLineCache();
+      myMissile1.nusiz(value);
+      myPlayer1.nusiz(value, myHstate == HState::blank);
+      myShadowRegisters[address] = value;
+      break;
+
+    case HMM0:
+      myDelayQueue.push(HMM0, value, Delay::hmm);
+      break;
+
+    case HMM1:
+      myDelayQueue.push(HMM1, value, Delay::hmm);
+      break;
+
+    case HMCLR:
+      myDelayQueue.push(HMCLR, value, Delay::hmclr);
+      break;
+
+    case GRP0:
+    {
+      myDelayQueue.push(GRP0, value, Delay::grp);
+      myDelayQueue.push(DummyRegisters::shuffleP1, 0, myPlSwapDelay);
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::GFX);
+    #endif
+      break;
+    }
+
+    case GRP1:
+    {
+      myDelayQueue.push(GRP1, value, Delay::grp);
+      myDelayQueue.push(DummyRegisters::shuffleP0, 0, myPlSwapDelay);
+      myDelayQueue.push(DummyRegisters::shuffleBL, 0, Delay::shuffleBall);
+    #ifdef DEBUGGER_SUPPORT
+      const uInt16 dataAddr = mySystem->m6502().lastDataAddressForPoke();
+      if(dataAddr)
+        mySystem->setAccessFlags(dataAddr, Device::GFX);
+    #endif
+      break;
+    }
+
+    case RESP0:
+      // Player position counter reset — any pixels already drawn used the
+      // old position; render-counter rewind in Player::resp may also
+      // affect this scanline.
+      flushLineCache();
+      myPlayer0.resp(resxCounter(),
+        myHstate == HState::blank && myMovementInProgress && myMovementClock == 0);
+      myShadowRegisters[address] = value;
+      break;
+
+    case RESP1:
+      // Same as RESP0.
+      flushLineCache();
+      myPlayer1.resp(resxCounter(),
+        myHstate == HState::blank && myMovementInProgress && myMovementClock == 0);
+      myShadowRegisters[address] = value;
+      break;
+
+    case REFP0:
+      myDelayQueue.push(REFP0, value, Delay::refp);
+      break;
+
+    case REFP1:
+      myDelayQueue.push(REFP1, value, Delay::refp);
+      break;
+
+    case VDELP0:
+      myPlayer0.vdelp(value);
+      myShadowRegisters[address] = value;
+      break;
+
+    case VDELP1:
+      myPlayer1.vdelp(value);
+      myShadowRegisters[address] = value;
+      break;
+
+    case HMP0:
+      myDelayQueue.push(HMP0, value, Delay::hmp);
+      break;
+
+    case HMP1:
+      myDelayQueue.push(HMP1, value, Delay::hmp);
+      break;
+
+    case ENABL:
+      myDelayQueue.push(ENABL, value, Delay::enabl);
+      break;
+
+    case RESBL:
+      // Ball position counter reset — same reasoning as RESPx/RESMx.
+      flushLineCache();
+      myBall.resbl(resxCounter(),
+        myHstate == HState::blank && myMovementInProgress && myMovementClock == 0);
+      myShadowRegisters[address] = value;
+      break;
+
+    case VDELBL:
+      myBall.vdelbl(value);
+      myShadowRegisters[address] = value;
+      break;
+
+    case HMBL:
+      myDelayQueue.push(HMBL, value, Delay::hmbl);
+      break;
+
+    case CXCLR:
+      // Collision latches are shared state that subsequent reads on this
+      // line will observe; flush so updateCollision rebuilds them from
+      // the rewound counters rather than from a cloned line.
+      flushLineCache();
+      myCollisionMask = CollisionMask::NONE;
+      myShadowRegisters[address] = value;
+      break;
+
+    default:
+      break;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::saveDisplay(Serializer& out) const
+{
+  try
+  {
+    out.putByteArray(myFramebuffer);
+    out.putByteArray(myBackBuffer);
+    out.putByteArray(myFrontBuffer);
+    out.putInt(myFramesSinceLastRender);
+
+    if(!myAudio.saveSamples(out)) return false;
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA::saveDisplay\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::loadDisplay(Serializer& in)
+{
+  try
+  {
+    // Reset frame buffer pointer and data
+    in.getByteArray(myFramebuffer);
+    in.getByteArray(myBackBuffer);
+    in.getByteArray(myFrontBuffer);
+    myFramesSinceLastRender = in.getInt();
+
+    if(!myAudio.loadSamples(in)) return false;
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA::loadDisplay\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::applyDeveloperSettings()
+{
+  const bool devSettings = mySettings.getBool("dev.settings");
+  if(devSettings)
+  {
+    const string tiaType = mySettings.getString("dev.tia.type");
+    const bool custom = BSPF::equalsIgnoreCase("custom", tiaType);
+
+    setPlInvertedPhaseClock(custom
+      ? mySettings.getBool("dev.tia.plinvphase")
+      : BSPF::equalsIgnoreCase("koolaidman", tiaType));
+    setMsInvertedPhaseClock(custom
+      ? mySettings.getBool("dev.tia.msinvphase")
+      : BSPF::equalsIgnoreCase("cosmicark", tiaType));
+    setBlInvertedPhaseClock(custom
+      ? mySettings.getBool("dev.tia.blinvphase")
+      : false);
+    setPlShortLateHMove(custom
+      ? mySettings.getBool("dev.tia.pllatehmove")
+      : BSPF::equalsIgnoreCase("flashmenu", tiaType));
+    setMsShortLateHMove(custom
+      ? mySettings.getBool("dev.tia.mslatehmove")
+      : false);
+    setBlShortLateHMove(custom
+      ? mySettings.getBool("dev.tia.bllatehmove")
+      : false);
+    setPlLateRespx(custom
+      ? mySettings.getBool("dev.tia.pllaterespx")
+      : BSPF::equalsIgnoreCase("lightsixer", tiaType));
+    setMsLateRespx(custom
+      ? mySettings.getBool("dev.tia.mslaterespx")
+      : BSPF::equalsIgnoreCase("lightsixer", tiaType) || BSPF::equalsIgnoreCase("juniorbug", tiaType));
+    setBlLateRespx(custom
+      ? mySettings.getBool("dev.tia.bllaterespx")
+      : BSPF::equalsIgnoreCase("lightsixer", tiaType));
+    setPFBitsDelay(custom
+      ? mySettings.getBool("dev.tia.delaypfbits")
+      : BSPF::equalsIgnoreCase("pesco", tiaType));
+    setPFColorDelay(custom
+      ? mySettings.getBool("dev.tia.delaypfcolor")
+      : BSPF::equalsIgnoreCase("quickstep", tiaType));
+    setPFScoreGlitch(custom
+      ? mySettings.getBool("dev.tia.pfscoreglitch")
+      : BSPF::equalsIgnoreCase("matchie", tiaType));
+    setBKColorDelay(custom
+      ? mySettings.getBool("dev.tia.delaybkcolor")
+      : BSPF::equalsIgnoreCase("indy500", tiaType));
+    setPlSwapDelay(custom
+      ? mySettings.getBool("dev.tia.delayplswap")
+      : BSPF::equalsIgnoreCase("heman", tiaType));
+    setBlSwapDelay(custom
+      ? mySettings.getBool("dev.tia.delayblswap")
+      : false);
+  }
+  else
+  {
+    setPlInvertedPhaseClock(false);
+    setMsInvertedPhaseClock(false);
+    setBlInvertedPhaseClock(false);
+    setPlLateRespx(false);
+    setMsLateRespx(false);
+    setBlLateRespx(false);
+    setPFBitsDelay(false);
+    setPFColorDelay(false);
+    myPlayfield.setScoreGlitch(false);
+    setBKColorDelay(false);
+    setPlSwapDelay(false);
+    setBlSwapDelay(false);
+  }
+
+  myRandomize = mySettings.getBool(devSettings ? "dev.tiarandom" : "plr.tiarandom");
+  myTIAPinsDriven = devSettings ? mySettings.getBool("dev.tiadriven") : false;
+
+  myEnableJitter = mySettings.getBool(devSettings ? "dev.tv.jitter" : "plr.tv.jitter");
+  myJitterSensitivity = mySettings.getInt(devSettings ? "dev.tv.jitter_sense" : "plr.tv.jitter_sense");
+  myJitterRecovery = mySettings.getInt(devSettings ? "dev.tv.jitter_recovery" : "plr.tv.jitter_recovery");
+
+  if(myFrameManager)
+    enableColorLoss(mySettings.getBool(devSettings ? "dev.colorloss" : "plr.colorloss"));
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::update(DispatchResult& result, uInt64 maxCycles)
+{
+  mySystem->m6502().execute(maxCycles, result);
+
+  updateEmulation();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::renderToFrameBuffer()
+{
+  if (myFramesSinceLastRender == 0) return;
+
+  myFramesSinceLastRender = 0;
+
+  myFramebuffer = myFrontBuffer;
+
+  myFrameBufferScanlines = myFrontBufferScanlines;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::clearFrameBuffer()
+{
+  myFramebuffer.fill(0);
+  myFrontBuffer.fill(0);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::update(uInt64 maxCycles)
+{
+  DispatchResult dispatchResult;
+
+  update(dispatchResult, maxCycles);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::enableColorLoss(bool enabled)
+{
+  const bool allowColorLoss = myTimingProvider() == ConsoleTiming::pal;
+
+  if(allowColorLoss && enabled)
+  {
+    myColorLossEnabled = true;
+    myColorLossActive = myFrameManager->scanlinesLastFrame() & 0x1U;
+  }
+  else
+  {
+    myColorLossEnabled = myColorLossActive = false;
+
+    myMissile0.applyColorLoss();
+    myMissile1.applyColorLoss();
+    myPlayer0.applyColorLoss();
+    myPlayer1.applyColorLoss();
+    myBall.applyColorLoss();
+    myPlayfield.applyColorLoss();
+    myBackground.applyColorLoss();
+  }
+
+  return allowColorLoss;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::electronBeamPos(uInt32& x, uInt32& y) const
+{
+  const uInt8 clocks = clocksThisLine();
+
+  x = (clocks < TIAConstants::H_BLANK_CLOCKS) ? 0 : clocks - TIAConstants::H_BLANK_CLOCKS;
+  y = myFrameManager->getY();
+
+  return isRendering();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::toggleBit(TIABit b, BitState mode)
+{
+  auto mask = TIABit{};
+
+  switch (mode) {
+    case BitState::Off:
+      break;
+    case BitState::On:
+      mask = b;
+      break;
+    case BitState::Toggle:
+      mask = ~mySpriteEnabledBits & b;
+      break;
+    case BitState::Query:
+      mask = mySpriteEnabledBits & b;
+      break;
+    default:
+      break;
+  }
+
+  mySpriteEnabledBits = (mySpriteEnabledBits & ~b) | mask;
+
+  myMissile0.toggleEnabled(bmBool(mySpriteEnabledBits & TIABit::M0));
+  myMissile1.toggleEnabled(bmBool(mySpriteEnabledBits & TIABit::M1));
+  myPlayer0.toggleEnabled(bmBool(mySpriteEnabledBits & TIABit::P0));
+  myPlayer1.toggleEnabled(bmBool(mySpriteEnabledBits & TIABit::P1));
+  myBall.toggleEnabled(bmBool(mySpriteEnabledBits & TIABit::BL));
+  myPlayfield.toggleEnabled(bmBool(mySpriteEnabledBits & TIABit::PF));
+
+  return Bitmask::to_underlying(mask) != 0;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::toggleBits(bool toggle)
+{
+  toggleBit(TIABit::All, toggle
+    ? Bitmask::Enum{mySpriteEnabledBits}.any() ? BitState::Off : BitState::On
+    : BitState::Query);
+
+  return Bitmask::Enum{mySpriteEnabledBits}.any();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::toggleCollision(TIABit b, BitState mode)
+{
+  auto mask = TIABit{};
+
+  switch (mode) {
+    case BitState::Off:
+      break;
+    case BitState::On:
+      mask = b;
+      break;
+    case BitState::Toggle:
+      mask = ~myCollisionsEnabledBits & b;
+      break;
+    case BitState::Query:
+      mask = myCollisionsEnabledBits & b;
+      break;
+    default:
+      break;
+  }
+
+  myCollisionsEnabledBits = (myCollisionsEnabledBits & ~b) | mask;
+
+  myMissile0.toggleCollisions(bmBool(myCollisionsEnabledBits & TIABit::M0));
+  myMissile1.toggleCollisions(bmBool(myCollisionsEnabledBits & TIABit::M1));
+  myPlayer0.toggleCollisions(bmBool(myCollisionsEnabledBits & TIABit::P0));
+  myPlayer1.toggleCollisions(bmBool(myCollisionsEnabledBits & TIABit::P1));
+  myBall.toggleCollisions(bmBool(myCollisionsEnabledBits & TIABit::BL));
+  myPlayfield.toggleCollisions(bmBool(myCollisionsEnabledBits & TIABit::PF));
+
+  return Bitmask::BitmaskEnum{mask}.any();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::toggleCollisions(bool toggle)
+{
+  toggleCollision(TIABit::All, toggle
+    ? Bitmask::Enum{myCollisionsEnabledBits}.any() ? BitState::Off : BitState::On
+    : BitState::Query);
+
+  return Bitmask::BitmaskEnum{myCollisionsEnabledBits}.any();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::enableFixedColors(bool enable)
+{
+  const ConsoleTiming timing_type = myTimingProvider();
+  const int timing = timing_type == ConsoleTiming::ntsc ? 0
+    : timing_type == ConsoleTiming::pal ? 1 : 2;
+
+  myMissile0.setDebugColor(myFixedColorPalette[timing][FixedObject::M0]);
+  myMissile1.setDebugColor(myFixedColorPalette[timing][FixedObject::M1]);
+  myPlayer0.setDebugColor(myFixedColorPalette[timing][FixedObject::P0]);
+  myPlayer1.setDebugColor(myFixedColorPalette[timing][FixedObject::P1]);
+  myBall.setDebugColor(myFixedColorPalette[timing][FixedObject::BL]);
+  myPlayfield.setDebugColor(myFixedColorPalette[timing][FixedObject::PF]);
+  myBackground.setDebugColor(myFixedColorPalette[timing][FixedObject::BK]);
+
+  myMissile0.enableDebugColors(enable);
+  myMissile1.enableDebugColors(enable);
+  myPlayer0.enableDebugColors(enable);
+  myPlayer1.enableDebugColors(enable);
+  myBall.enableDebugColors(enable);
+  myPlayfield.enableDebugColors(enable);
+  myBackground.enableDebugColors(enable);
+  myColorHBlank = enable ? FixedColor::HBLANK_WHITE : 0x00;
+
+  return enable;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::setFixedColorPalette(string_view colors)
+{
+  for(auto i = 0UZ; i < std::min(6UZ, colors.size()); ++i)
+  {
+    switch(colors[i])
+    {
+      case 'r':
+        myFixedColorPalette[0][i] = FixedColor::NTSC_RED;
+        myFixedColorPalette[1][i] = FixedColor::PAL_RED;
+        myFixedColorPalette[2][i] = FixedColor::SECAM_RED;
+        myFixedColorNames[i] = "Red   ";
+        break;
+      case 'o':
+        myFixedColorPalette[0][i] = FixedColor::NTSC_ORANGE;
+        myFixedColorPalette[1][i] = FixedColor::PAL_ORANGE;
+        myFixedColorPalette[2][i] = FixedColor::SECAM_ORANGE;
+        myFixedColorNames[i] = "Orange";
+        break;
+      case 'y':
+        myFixedColorPalette[0][i] = FixedColor::NTSC_YELLOW;
+        myFixedColorPalette[1][i] = FixedColor::PAL_YELLOW;
+        myFixedColorPalette[2][i] = FixedColor::SECAM_YELLOW;
+        myFixedColorNames[i] = "Yellow";
+        break;
+      case 'g':
+        myFixedColorPalette[0][i] = FixedColor::NTSC_GREEN;
+        myFixedColorPalette[1][i] = FixedColor::PAL_GREEN;
+        myFixedColorPalette[2][i] = FixedColor::SECAM_GREEN;
+        myFixedColorNames[i] = "Green ";
+        break;
+      case 'b':
+        myFixedColorPalette[0][i] = FixedColor::NTSC_BLUE;
+        myFixedColorPalette[1][i] = FixedColor::PAL_BLUE;
+        myFixedColorPalette[2][i] = FixedColor::SECAM_BLUE;
+        myFixedColorNames[i] = "Blue  ";
+        break;
+      case 'p':
+        myFixedColorPalette[0][i] = FixedColor::NTSC_PURPLE;
+        myFixedColorPalette[1][i] = FixedColor::PAL_PURPLE;
+        myFixedColorPalette[2][i] = FixedColor::SECAM_PURPLE;
+        myFixedColorNames[i] = "Purple";
+        break;
+      default:
+        break;
+    }
+  }
+  myFixedColorPalette[0][TIA::BK] = FixedColor::NTSC_GREY;
+  myFixedColorPalette[1][TIA::BK] = FixedColor::PAL_GREY;
+  myFixedColorPalette[2][TIA::BK] = FixedColor::SECAM_GREY;
+
+  // If already in fixed debug colours mode, update the current palette
+  if(usingFixedColors())
+    enableFixedColors(true);
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::driveUnusedPinsRandom(uInt8 mode)
+{
+  // If mode is 0 or 1, use it as a boolean (off or on)
+  // Otherwise, return the state
+  if (mode == 0 || mode == 1)
+    myTIAPinsDriven = static_cast<bool>(mode);
+
+  return myTIAPinsDriven;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool TIA::toggleJitter(uInt8 mode)
+{
+  switch (mode) {
+    case 0:
+      myEnableJitter = false;
+      break;
+
+    case 1:
+      myEnableJitter = true;
+      break;
+
+    case 2:
+      myEnableJitter = !myEnableJitter;
+      break;
+
+    case 3:
+      break;
+
+    default:
+      throw std::runtime_error("invalid argument for toggleJitter");
+  }
+
+  if (myFrameManager) myFrameManager->enableJitter(myEnableJitter);
+
+  return myEnableJitter;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setJitterSensitivity(Int32 sensitivity)
+{
+  myJitterSensitivity = sensitivity;
+
+  if (myFrameManager) myFrameManager->setJitterSensitivity(sensitivity);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setJitterRecoveryFactor(Int32 factor)
+{
+  myJitterRecovery = factor;
+
+  if (myFrameManager) myFrameManager->setJitterRecovery(myJitterRecovery);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+shared_ptr<DelayQueueIterator> TIA::delayQueueIterator() const
+{
+  return std::make_shared<DelayQueueIteratorImpl<delayQueueLength, delayQueueSize>>(
+    myDelayQueue
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+TIA& TIA::updateScanline()
+{
+  // Update frame by one scanline at a time
+  const uInt32 line = scanlines();
+  while (line == scanlines() && mySystem->m6502().execute(1));
+
+  return *this;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+TIA& TIA::updateScanlineByStep()
+{
+  // Update frame by one CPU instruction/color clock
+  mySystem->m6502().execute(1);
+
+  return *this;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::registerValue(uInt8 reg) const
+{
+  return reg < 64 ? myShadowRegisters[reg] : 0;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// Lazy catch-up: the CPU runs freely, and the TIA simulation only advances
+// when externally visible state matters. This is called on every peek/poke,
+// at the end of M6502::execute, and from controller analog-pin callbacks.
+// myLastCycle tracks the system-clock value at the end of the previous
+// catch-up; mySubClock carries the fractional color clock (0..2) since the
+// CPU clock is 1/3 of the color clock.
+void TIA::updateEmulation()
+{
+  const uInt64 systemCycles = mySystem->cycles();
+
+  if (mySubClock > TIAConstants::CYCLE_CLOCKS - 1)
+    throw std::runtime_error("subclock exceeds range");
+
+  const uInt32 cyclesToRun = TIAConstants::CYCLE_CLOCKS *
+      U32(systemCycles - myLastCycle) + mySubClock;
+
+  mySubClock = 0;
+  myLastCycle = systemCycles;
+
+  cycle(cyclesToRun);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::onFrameStart()
+{
+  myXAtRenderingStart = 0;
+#ifdef DEBUGGER_SUPPORT
+  myFrameWsyncCycles = 0;
+  mySystem->m6532().resetTimReadCycles();
+#endif
+
+  // Check for colour-loss emulation
+  // Only activate it when necessary, since changing colours in
+  // the graphical object forces the TIA cached line to be flushed
+  if (myColorLossEnabled && myFrameManager->scanlineParityChanged())
+  {
+    myColorLossActive = myFrameManager->scanlinesLastFrame() & 0x1U;
+
+    myMissile0.applyColorLoss();
+    myMissile1.applyColorLoss();
+    myPlayer0.applyColorLoss();
+    myPlayer1.applyColorLoss();
+    myBall.applyColorLoss();
+    myPlayfield.applyColorLoss();
+    myBackground.applyColorLoss();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::onFrameComplete()
+{
+  mySystem->m6502().stop();
+#ifdef DEBUGGER_SUPPORT
+  myCyclesAtFrameStart = mySystem->cycles();
+#endif
+
+  if (myXAtRenderingStart > 0)
+    std::fill_n(myBackBuffer.begin(), myXAtRenderingStart, 0);
+
+  // Blank out any extra lines not drawn this frame
+  const Int32 missingScanlines = myFrameManager->missingScanlines();
+  if (missingScanlines > 0)
+    std::fill_n(myBackBuffer.begin() +
+      SZT(TIAConstants::H_PIXEL * myFrameManager->getY()),
+      missingScanlines * TIAConstants::H_PIXEL, 0);
+
+  myFrontBuffer = myBackBuffer;
+
+  myFrontBufferScanlines = scanlinesLastFrame();
+
+  if(myAutoPhosphorEnabled)
+  {
+    // Calculate difference to previous frames (with some margin).
+    // If difference to latest frame is larger than to older frames, and this happens for
+    // multiple frames, enabled phosphor mode.
+    static constexpr int MIN_FLICKER_DELTA = 6;
+    static constexpr int MAX_FLICKER_DELTA = TIAConstants::H_PIXEL - MIN_FLICKER_DELTA;
+    static constexpr int MIN_DIFF = 4;
+    static constexpr int PHOSPHOR_FRAMES = 8;
+
+    int diffCount[FLICKER_FRAMES - 1];
+
+    //cerr << missingScanlines << ", " << myFrameEnd << " | ";
+    //cerr << myFlickerFrame << ": ";
+    for(int frame = 0; frame < FLICKER_FRAMES - 1; ++frame)
+    {
+      const int otherFrame = (myFlickerFrame + frame + 1) % FLICKER_FRAMES;
+      int count = 0;
+      for(uInt32 y = 0; y <= myFrameEnd; ++y)
+      {
+        int delta = std::abs(myPosP0[y][myFlickerFrame] - myPosP0[y][otherFrame]);
+        if(delta >= MIN_FLICKER_DELTA && delta <= MAX_FLICKER_DELTA)
+          ++count;
+        delta = std::abs(myPosP1[y][myFlickerFrame] - myPosP1[y][otherFrame]);
+        if(delta >= MIN_FLICKER_DELTA && delta <= MAX_FLICKER_DELTA)
+          ++count;
+        delta = std::abs(myPosM0[y][myFlickerFrame] - myPosM0[y][otherFrame]);
+        if(delta >= MIN_FLICKER_DELTA && delta <= MAX_FLICKER_DELTA)
+          ++count;
+        delta = std::abs(myPosM1[y][myFlickerFrame] - myPosM1[y][otherFrame]);
+        if(delta >= MIN_FLICKER_DELTA && delta <= MAX_FLICKER_DELTA)
+          ++count;
+        delta = std::abs(myPosBL[y][myFlickerFrame] - myPosBL[y][otherFrame]);
+        if(delta >= MIN_FLICKER_DELTA && delta <= MAX_FLICKER_DELTA)
+          ++count;
+        if(myPatPF[y][myFlickerFrame] != myPatPF[y][otherFrame])
+          ++count;
+      }
+      diffCount[frame] = count;
+    }
+    //cerr << ": ";
+    //for(int i = 0; i < FLICKER_FRAMES - 1; ++i)
+    //  cerr << diffCount[i] << ", ";
+    if(diffCount[0] > MIN_DIFF &&
+      (diffCount[0] > diffCount[1] * 1.1 ||
+       diffCount[0] > diffCount[2] * 1.2 ||
+       diffCount[0] > diffCount[3] * 1.3))
+    {
+      if(myFlickerCount < PHOSPHOR_FRAMES)
+      {
+        myFlickerCount += 2; // enabled phosphor twice as fast
+        if(myFlickerCount >= PHOSPHOR_FRAMES && !myAutoPhosphorActive)
+        {
+          myAutoPhosphorActive = true;
+          myPhosphorCallback(true);
+          // If auto-on, disable phosphor automatic (phosphor stays enabled)
+          if(myAutoPhosphorAutoOn)
+            myAutoPhosphorEnabled = false;
+        }
+      }
+    }
+    // NOLINTNEXTLINE(bugprone-inc-dec-in-conditions)
+    else if(myFlickerCount && --myFlickerCount == 0 && myAutoPhosphorActive)
+    {
+      myAutoPhosphorActive = false;
+      myPhosphorCallback(false);
+    }
+    //cerr << "|" << myFlickerCount;
+    //if(myAutoPhosphorActive)
+    //  cerr << " *** ON ***\n";
+    //else
+    //  cerr << " off\n";
+
+    if(--myFlickerFrame < 0)
+      myFlickerFrame = FLICKER_FRAMES - 1;
+  }
+  ++myFramesSinceLastRender;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::onHalt()
+{
+  mySubClock += (TIAConstants::H_CLOCKS - myHctr) % TIAConstants::H_CLOCKS;
+  mySystem->incrementCycles(mySubClock / TIAConstants::CYCLE_CLOCKS);
+#ifdef DEBUGGER_SUPPORT
+  myFrameWsyncCycles += 3 + mySubClock / TIAConstants::CYCLE_CLOCKS;
+#endif
+  mySubClock %= TIAConstants::CYCLE_CLOCKS;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// Per-color-clock simulation step. The order matters:
+//   1. Execute any DelayQueue entries scheduled for this clock (these are
+//      writes whose effect was pipelined N clocks back; see TIA::poke).
+//   2. Tick movement (only on every 4th color clock when HMOVE is active),
+//      then either the HBLANK or visible-frame tick for each sprite, then
+//      accumulate collisions (skipped during VBLANK to match real hardware).
+//   3. Advance the master horizontal counter; wrap into next scanline at 228.
+//
+// Audio is processed up front for the whole batch: nothing in the per-clock
+// loop can affect audio state (AUDxx writes are applied in poke(), outside
+// cycle(), and delayedWrite() never touches audio), and the audio clock
+// free-runs on total color clocks independent of myHctr — see Audio::tick.
+//
+// The full sprite path (step 2) is bypassed once myLinesSinceChange reaches
+// 2: subsequent lines are memcpy clones of the previous one until the next
+// state change calls flushLineCache(). This is the line cache fast path.
+// When it is active and no delayed writes are pending, no per-clock work
+// remains at all, so the loop skips to the next line boundary in one step.
+void TIA::cycle(uInt32 colorClocks)
+{
+#ifdef SOUND_SUPPORT
+  myAudio.tick(colorClocks);
+#endif
+
+  while (colorClocks > 0)
+  {
+    if (myLinesSinceChange >= 2 && myDelayQueue.empty())
+    {
+      // Once empty, the delay queue stays empty for the rest of the batch
+      // (only poke() pushes entries), so nothing can change until the next
+      // line boundary
+      const uInt32 chunk =
+        std::min(colorClocks, U32(TIAConstants::H_CLOCKS - myHctr));
+
+      myHctr = U8(myHctr + chunk);
+      myTimestamp += chunk;
+      colorClocks -= chunk;
+
+      if (myHctr >= TIAConstants::H_CLOCKS)
+        nextLine();
+
+      continue;
+    }
+
+    myDelayQueue.execute(
+      [this] (uInt8 address, uInt8 value) {delayedWrite(address, value);}
+    );
+
+    if (myLinesSinceChange < 2) {
+      tickMovement();
+
+      if (myHstate == HState::blank) [[unlikely]]
+        tickHblank();
+      else
+        tickHframe();
+
+      // Collisions are only latched during the visible portion of each
+      // scanline on real hardware — VBLANK gates the collision latches.
+      if (!myFrameManager->vblank()) updateCollision();
+    }
+
+    if (++myHctr >= TIAConstants::H_CLOCKS) [[unlikely]]
+      nextLine();
+
+    ++myTimestamp;
+    --colorClocks;
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// HMOVE distributes movement clocks at 1/4 of the color-clock rate (only
+// on color-clocks where the low 2 bits of myHctr are zero). The movement
+// counter saturates at 15 — beyond that no further per-sprite tick is
+// signalled, matching the HMxx high-nibble interpretation.
+FORCE_INLINE void TIA::tickMovement()
+{
+  if (!myMovementInProgress) [[likely]] return;
+
+  if ((myHctr & 0x03U) == 0) {
+    const bool hblank = myHstate == HState::blank;
+    const uInt8 movementCounter = myMovementClock > 15 ? 0 : myMovementClock;
+
+    myMissile0.movementTick(movementCounter, myHctr, hblank);
+    myMissile1.movementTick(movementCounter, myHctr, hblank);
+    myPlayer0.movementTick(movementCounter, myHctr, hblank);
+    myPlayer1.movementTick(movementCounter, myHctr, hblank);
+    myBall.movementTick(movementCounter, myHctr, hblank);
+
+    myMovementInProgress =
+      myMissile0.isMoving ||
+      myMissile1.isMoving ||
+      myPlayer0.isMoving  ||
+      myPlayer1.isMoving  ||
+      myBall.isMoving;
+
+    ++myMovementClock;
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// During HBLANK each sprite's F1 latch still receives the CLKP color clock
+// (used to latch the display signal); tickClkpInHblank updates each
+// sprite's collision/visibility latch without advancing its counter or
+// sample logic — see Player::tickClkpInHblank / Missile::tickClkpInHblank
+// / Ball::tickClkpInHblank for the per-sprite split.
+//
+// HBLANK is normally 68 color clocks (H_BLANK_CLOCKS); HMOVE extends it
+// by 8 (myExtendedHblank). When extended, the playfield still starts
+// ticking inside HBLANK after the regular boundary so that pixels in the
+// HMOVE-comb region are produced correctly.
+FORCE_INLINE void TIA::tickHblank()
+{
+  myMissile0.tickClkpInHblank();
+  myMissile1.tickClkpInHblank();
+  myPlayer0.tickClkpInHblank();
+  myPlayer1.tickClkpInHblank();
+  myBall.tickClkpInHblank();
+
+  switch (myHctr) {
+    case 0:
+      myExtendedHblank = false;
+      break;
+
+    case TIAConstants::H_BLANK_CLOCKS - 1:
+      if (!myExtendedHblank) myHstate = HState::frame;
+      break;
+
+    case TIAConstants::H_BLANK_CLOCKS + 7:
+      if (myExtendedHblank) myHstate = HState::frame;
+      break;
+
+    [[likely]] default:
+      break;
+  }
+
+  if (myExtendedHblank && myHctr - myHctrDelta > TIAConstants::H_BLANK_CLOCKS - 1)
+    myPlayfield.tick(myHctr - TIAConstants::H_BLANK_CLOCKS - myHctrDelta);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// Visible-frame per-color-clock tick. Missiles take the associated player
+// as an argument so their RESMP "lock to player" tracking can sample the
+// player's main-copy scan counter — see Missile::resmpTick.
+FORCE_INLINE void TIA::tickHframe()
+{
+  const uInt32 x = myHctr - TIAConstants::H_BLANK_CLOCKS - myHctrDelta;
+
+  myPlayfield.tick(x);
+  myPlayer0.tick();
+  myPlayer1.tick();
+  myMissile0.tick(myHctr, myPlayer0);
+  myMissile1.tick(myHctr, myPlayer1);
+  myBall.tick();
+
+  if (myFrameManager->isRendering()) [[likely]]
+    renderPixel(x);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::applyRsync()
+{
+  const uInt32 x = myHctr > TIAConstants::H_BLANK_CLOCKS
+      ? myHctr - TIAConstants::H_BLANK_CLOCKS : 0;
+
+  myHctrDelta = TIAConstants::H_CLOCKS - 3 - myHctr;
+  if (myFrameManager->isRendering())
+    std::fill_n(myBackBuffer.begin() +
+      SZT(myFrameManager->getY() * TIAConstants::H_PIXEL + x),
+      TIAConstants::H_PIXEL - x, 0);
+
+  myHctr = TIAConstants::H_CLOCKS - 3;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+FORCE_INLINE void TIA::nextLine()
+{
+  bool cloned = false;
+  if (myLinesSinceChange >= 2) {
+    cloneLastLine();
+    cloned = true;
+  }
+
+  myHctr = 0;
+
+  if (!myMovementInProgress && myLinesSinceChange < 2) ++myLinesSinceChange;
+
+  myHstate = HState::blank;
+  myHctrDelta = 0;
+
+  myFrameManager->nextLine();
+  // y only advances here, so this is the single correct update point for the
+  // precomputed row pointer used in renderPixel()
+  myCurrentRowPtr = myBackBuffer.data() +
+    SZT(myFrameManager->getY()) * TIAConstants::H_PIXEL;
+
+  myMissile0.nextLine();
+  myMissile1.nextLine();
+  myPlayer0.nextLine();
+  myPlayer1.nextLine();
+  myBall.nextLine();
+  myPlayfield.nextLine();
+
+  if(myFrameManager->isRendering())
+  {
+    // First rendered line of a new frame — discard any cache carried over
+    // from the previous frame so y=0 is rebuilt from a clean replay.
+    if(myFrameManager->getY() == 0)
+      flushLineCache();
+
+    // Save positions of objects for auto-phosphor
+    if(myAutoPhosphorEnabled) [[unlikely]]
+    {
+      // Test ROMs:
+      // - missing phosphor:
+      //   - QB: flicker sprite for multi color (same position, different shape and color)
+      //   - Star Castle Arcade: vector font flicker (same position, different shape)
+      //   - Omega Race: no phosphor enabled (flickers every 2nd frame)
+      //   - Riddle of the Sphinx: shots (too small to be detected)
+      //   x Yars' Revenge: shield, neutral zone (PF flicker)
+      //
+      // - unneccassary phosphor:
+      //   - Gas Hog: before game starts (odd invisible sprite position changes)
+      //   x Turmoil: M1 rockets (gap between RESM1 and HMOVE?)
+      //   x Fathom: seaweed (many sprites moving vertically)
+      //   x FourPlay: game start (???)
+      //   x Freeway: always (too many sprites?)
+      const uInt32 y = myFrameManager->getY();
+
+      myPosP0[y][myFlickerFrame] = myPlayer0.getPosition();
+      myPosP1[y][myFlickerFrame] = myPlayer1.getPosition();
+      // Only use new position if missile/ball are enabled
+      if(myMissile0.isOn())
+        myPosM0[y][myFlickerFrame] = myMissile0.getPosition();
+      if(myMissile1.isOn())
+        myPosM1[y][myFlickerFrame] = myMissile1.getPosition();
+      if(myBall.isOn())
+        myPosBL[y][myFlickerFrame] = myBall.getPosition();
+      // Note: code checks only right side of playfield
+      myPatPF[y][myFlickerFrame] =
+          U32(registerValue(PF0)) << 16U
+        | U32(registerValue(PF1)) << 8U
+        | U32(registerValue(PF2));
+      // Define end of frame for faster auto-phosphor calculation
+      if(!cloned)
+        myFrameEnd = y;
+    }
+  }
+  mySystem->m6502().clearHaltRequest();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::cloneLastLine()
+{
+  if(myIsLayoutDetector) [[unlikely]]
+  {
+    // y is always 0 in FrameLayoutDetector
+    for(uInt32 i = 0 ; i < TIAConstants::H_PIXEL; ++i)
+      myFrameManager->pixelColor(myBackBuffer[i]);
+  }
+  else
+  {
+    const size_t y = myFrameManager->getY();
+
+    if(!myFrameManager->isRendering() || y == 0) return;
+
+    // myCurrentRowPtr points to row y here: cloneLastLine() is always called
+    // before myFrameManager->nextLine() advances y, so the pointer is still
+    // current and avoids two y*H_PIXEL multiplies
+    std::copy_n(myCurrentRowPtr - TIAConstants::H_PIXEL,
+      TIAConstants::H_PIXEL, myCurrentRowPtr);
+
+    // Save positions of objects for auto-phosphor
+    if(myAutoPhosphorEnabled) [[unlikely]]
+    {
+      myPosP0[y][myFlickerFrame] = myPosP0[y - 1][myFlickerFrame];
+      myPosP1[y][myFlickerFrame] = myPosP1[y - 1][myFlickerFrame];
+      myPosM0[y][myFlickerFrame] = myPosM0[y - 1][myFlickerFrame];
+      myPosM1[y][myFlickerFrame] = myPosM1[y - 1][myFlickerFrame];
+      myPosBL[y][myFlickerFrame] = myPosBL[y - 1][myFlickerFrame];
+      myPatPF[y][myFlickerFrame] = myPatPF[y - 1][myFlickerFrame];
+    }
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// Compute all 15 pair-collisions in parallel using the unique-bit pattern
+// encoding from the CollisionMask enum above.
+//
+// Each sprite's .collision is one of two precomputed values:
+//   Enabled  = 0xFFFF           (object emits a pixel this clock)
+//   Disabled = ~Self & 0x7FFF   (object is silent this clock)
+//
+// For the pair-bit k shared by exactly two objects A and B:
+//   - If A is silent, ~A clears bit k -> AND result bit k = 0.
+//   - If B is silent, same via B -> AND result bit k = 0.
+//   - If both A and B emit, both contribute 1; every other object C
+//     contributes 1 either way (silent: bit k is not in C's mask so ~C
+//     keeps it set; emitting: C is all-ones).
+// So bit k is set in the AND iff A and B both emit this clock.
+//
+// The OR-accumulate into myCollisionMask mirrors per-pair latches: once a
+// pair has collided this frame, the bit sticks until CXCLR clears it.
+FORCE_INLINE void TIA::updateCollision()
+{
+  myCollisionMask |= (
+    myPlayer0.collision &
+    myPlayer1.collision &
+    myMissile0.collision &
+    myMissile1.collision &
+    myBall.collision &
+    myPlayfield.collision
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+FORCE_INLINE void TIA::renderPixel(uInt32 x)
+{
+  if (x >= TIAConstants::H_PIXEL) [[unlikely]] return;
+
+  uInt8 color = 0;
+
+  if (!myFrameManager->vblank())
+  {
+    switch (myPriority)
+    {
+      case Priority::pfp:  // CTRLPF D2=1, D1=ignored
+        // Playfield has priority so ScoreBit isn't used
+        // Priority from highest to lowest:
+        //   BL/PF => P0/M0 => P1/M1 => BK
+        if (myPlayfield.isOn())       color = myPlayfield.getColor();
+        else if (myBall.isOn())       color = myBall.getColor();
+        else if (myPlayer0.isOn())    color = myPlayer0.getColor();
+        else if (myMissile0.isOn())   color = myMissile0.getColor();
+        else if (myPlayer1.isOn())    color = myPlayer1.getColor();
+        else if (myMissile1.isOn())   color = myMissile1.getColor();
+        else                          color = myBackground.getColor();
+        break;
+
+      case Priority::score:  // CTRLPF D2=0, D1=1
+        // Formally we have (priority from highest to lowest)
+        //   PF/P0/M0 => P1/M1 => BL => BK
+        // for the first half and
+        //   P0/M0 => PF/P1/M1 => BL => BK
+        // for the second half. However, the first ordering is equivalent
+        // to the second (PF has the same color as P0/M0), so we can just
+        // write
+        if (myPlayer0.isOn())         color = myPlayer0.getColor();
+        else if (myMissile0.isOn())   color = myMissile0.getColor();
+        else if (myPlayfield.isOn())  color = myPlayfield.getColor();
+        else if (myPlayer1.isOn())    color = myPlayer1.getColor();
+        else if (myMissile1.isOn())   color = myMissile1.getColor();
+        else if (myBall.isOn())       color = myBall.getColor();
+        else                          color = myBackground.getColor();
+        break;
+
+      case Priority::normal:  // CTRLPF D2=0, D1=0
+        // Priority from highest to lowest:
+        //   P0/M0 => P1/M1 => BL/PF => BK
+        if (myPlayer0.isOn())         color = myPlayer0.getColor();
+        else if (myMissile0.isOn())   color = myMissile0.getColor();
+        else if (myPlayer1.isOn())    color = myPlayer1.getColor();
+        else if (myMissile1.isOn())   color = myMissile1.getColor();
+        else if (myPlayfield.isOn())  color = myPlayfield.getColor();
+        else if (myBall.isOn())       color = myBall.getColor();
+        else                          color = myBackground.getColor();
+        break;
+
+      default:
+        break;  // Not supposed to get here
+    }
+  }
+
+  // myCurrentRowPtr is precomputed once per scanline in nextLine(), avoiding
+  // a y*H_PIXEL multiply on every one of the 160 visible clocks per line
+  myCurrentRowPtr[x] = color;
+  if (myIsLayoutDetector) [[unlikely]]
+    myFrameManager->pixelColor(color);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// Drop the line-cache fast path and replay the partial current line so
+// subsequent ticks see correct sprite-counter state. Always safe to call —
+// when nothing has actually changed, replay just rebuilds the same state.
+//
+// Call sites that guard with "if (newValue != oldValue)" or similar are
+// doing so as an optimization (avoiding a needless replay), not because
+// flushing on a no-op write would be incorrect.
+void TIA::flushLineCache()
+{
+  const bool wasCaching = myLinesSinceChange >= 2;
+
+  myLinesSinceChange = 0;
+
+  if (wasCaching) {
+    const auto rewindCycles = myHctr;
+
+    for (myHctr = 0; myHctr < rewindCycles; ++myHctr) {
+      if (myHstate == HState::blank) [[unlikely]]
+        tickHblank();
+      else
+        tickHframe();
+    }
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::clearHmoveComb()
+{
+  if (myFrameManager->isRendering() && myHstate == HState::blank)
+    std::fill_n(myBackBuffer.begin() +
+      SZT(myFrameManager->getY() * TIAConstants::H_PIXEL),
+      8, myColorHBlank);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setPFBitsDelay(bool delayed)
+{
+  myPFBitsDelay = delayed ? Delay::pf + 1 : Delay::pf;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setPFColorDelay(bool delayed)
+{
+  myPFColorDelay = delayed ? 1 : 0;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setPFScoreGlitch(bool enable)
+{
+  myPlayfield.setScoreGlitch(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setBKColorDelay(bool delayed)
+{
+  myBKColorDelay = delayed ? 1 : 0;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setPlSwapDelay(bool delayed)
+{
+  myPlSwapDelay = delayed ? Delay::shufflePlayer + 1 : Delay::shufflePlayer;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setBlSwapDelay(bool delayed)
+{
+  myBlSwapDelay = delayed ? Delay::shuffleBall + 1 : Delay::shuffleBall;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setPlInvertedPhaseClock(bool enable)
+{
+  myPlayer0.setInvertedPhaseClock(enable);
+  myPlayer1.setInvertedPhaseClock(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setMsInvertedPhaseClock(bool enable)
+{
+  myMissile0.setInvertedPhaseClock(enable);
+  myMissile1.setInvertedPhaseClock(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setBlInvertedPhaseClock(bool enable)
+{
+  myBall.setInvertedPhaseClock(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setPlShortLateHMove(bool enable)
+{
+  myPlayer0.setShortLateHMove(enable);
+  myPlayer1.setShortLateHMove(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setMsShortLateHMove(bool enable)
+{
+  myMissile0.setShortLateHMove(enable);
+  myMissile1.setShortLateHMove(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setBlShortLateHMove(bool enable)
+{
+  myBall.setShortLateHMove(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setPlLateRespx(bool enable)
+{
+  myPlayer0.setLateRespx(enable);
+  myPlayer1.setLateRespx(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setMsLateRespx(bool enable)
+{
+  myMissile0.setLateRespx(enable);
+  myMissile1.setLateRespx(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setBlLateRespx(bool enable)
+{
+  myBall.setLateRespx(enable);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// Executor for DelayQueue entries: dispatched once per color clock from
+// cycle() when an entry's slot comes due. Real register writes update the
+// shadow register here (so the debugger sees the value once it has taken
+// effect); DummyRegisters::shuffle* are pseudo-addresses (see TIA.hxx)
+// that don't correspond to real TIA registers and are skipped by the
+// shadow update.
+void TIA::delayedWrite(uInt8 address, uInt8 value)
+{
+  if (address < 64)
+    myShadowRegisters[address] = value;
+
+  switch (address)
+  {
+    case VBLANK:
+      // VBLANK gates updateCollision and (via the frame manager) the visible
+      // window; a mid-line transition changes what subsequent pixels do.
+      flushLineCache();
+      myFrameManager->setVblank(value & 0x02U, myTimestamp / 3);
+      break;
+
+    case HMOVE:
+      // HMOVE extends HBLANK by 8 clocks, paints the comb pattern, and
+      // arms movement on every sprite — none of these can be reused from
+      // a cloned line.
+      flushLineCache();
+
+      myMovementClock = 0;
+      myMovementInProgress = true;
+
+      if (!myExtendedHblank) {
+        clearHmoveComb();
+        myExtendedHblank = true;
+      }
+
+      myMissile0.startMovement();
+      myMissile1.startMovement();
+      myPlayer0.startMovement();
+      myPlayer1.startMovement();
+      myBall.startMovement();
+      break;
+
+    case PF0:
+      myPlayfield.pf0(value);
+      break;
+
+    case PF1:
+      myPlayfield.pf1(value);
+      break;
+
+    case PF2:
+      myPlayfield.pf2(value);
+      break;
+
+    case COLUBK:
+      myBackground.setColor(value);
+      break;
+
+    case COLUPF:
+      myPlayfield.setColor(value);
+      myBall.setColor(value);
+      break;
+
+    case HMM0:
+      myMissile0.hmm(value);
+      break;
+
+    case HMM1:
+      myMissile1.hmm(value);
+      break;
+
+    case HMCLR:
+      // We must update the shadow registers for each HM object too
+      myMissile0.hmm(0);  myShadowRegisters[HMM0] = 0;
+      myMissile1.hmm(0);  myShadowRegisters[HMM1] = 0;
+      myPlayer0.hmp(0);   myShadowRegisters[HMP0] = 0;
+      myPlayer1.hmp(0);   myShadowRegisters[HMP1] = 0;
+      myBall.hmbl(0);     myShadowRegisters[HMBL] = 0;
+      break;
+
+    case GRP0:
+      myPlayer0.grp(value);
+      break;
+
+    case GRP1:
+      myPlayer1.grp(value);
+      break;
+
+    case DummyRegisters::shuffleP0:
+      myPlayer0.shufflePatterns();
+      break;
+
+    case DummyRegisters::shuffleP1:
+      myPlayer1.shufflePatterns();
+      break;
+
+    case DummyRegisters::shuffleBL:
+      myBall.shuffleStatus();
+      break;
+
+    case HMP0:
+      myPlayer0.hmp(value);
+      break;
+
+    case HMP1:
+      myPlayer1.hmp(value);
+      break;
+
+    case HMBL:
+      myBall.hmbl(value);
+      break;
+
+    case REFP0:
+      myPlayer0.refp(value);
+      break;
+
+    case REFP1:
+      myPlayer1.refp(value);
+      break;
+
+    case ENABL:
+      myBall.enabl(value);
+      break;
+
+    case ENAM0:
+      myMissile0.enam(value);
+      break;
+
+    case ENAM1:
+      myMissile1.enam(value);
+      break;
+
+    default:
+      break;
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::updateAnalogReadout(uInt8 idx)
+{
+  AnalogReadout::Connection connection{};
+  switch (idx) {
+    case 0:
+      connection = myConsole.leftController().read(Controller::AnalogPin::Five);
+      break;
+
+    case 1:
+      connection = myConsole.leftController().read(Controller::AnalogPin::Nine);
+      break;
+
+    case 2:
+      connection = myConsole.rightController().read(Controller::AnalogPin::Five);
+      break;
+
+    case 3:
+      connection = myConsole.rightController().read(Controller::AnalogPin::Nine);
+      break;
+
+    default:
+      throw std::runtime_error("invalid analog input");
+  }
+
+  if (connection == myLastAnalogConnections[idx])
+    return;
+
+  myLastAnalogConnections[idx] = connection;
+  updateEmulation();
+  myAnalogReadouts[idx].update(
+    connection,
+    myTimestamp,
+    myTimingProvider()
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::resxCounter()
+{
+  return myHstate == HState::blank ?
+    (myHctr >= resxLateHblankThreshold ? ResxCounter::lateHblank : ResxCounter::hblank) : ResxCounter::frame;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::collCXM0P() const
+{
+  return (
+    (bmBool(myCollisionMask & CollisionMask::missile0 & CollisionMask::player0) ? 0x40U : 0U) |
+    (bmBool(myCollisionMask & CollisionMask::missile0 & CollisionMask::player1) ? 0x80U : 0U)
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::collCXM1P() const
+{
+  return (
+    (bmBool(myCollisionMask & CollisionMask::missile1 & CollisionMask::player1) ? 0x40U : 0U) |
+    (bmBool(myCollisionMask & CollisionMask::missile1 & CollisionMask::player0) ? 0x80U : 0U)
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::collCXP0FB() const
+{
+  return (
+    (bmBool(myCollisionMask & CollisionMask::player0 & CollisionMask::ball) ? 0x40U : 0U) |
+    (bmBool(myCollisionMask & CollisionMask::player0 & CollisionMask::playfield) ? 0x80U : 0U)
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::collCXP1FB() const
+{
+  return (
+    (bmBool(myCollisionMask & CollisionMask::player1 & CollisionMask::ball) ? 0x40U : 0U) |
+    (bmBool(myCollisionMask & CollisionMask::player1 & CollisionMask::playfield) ? 0x80U : 0U)
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::collCXM0FB() const
+{
+  return (
+    (bmBool(myCollisionMask & CollisionMask::missile0 & CollisionMask::ball) ? 0x40U : 0U) |
+    (bmBool(myCollisionMask & CollisionMask::missile0 & CollisionMask::playfield) ? 0x80U : 0U)
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::collCXM1FB() const
+{
+  return (
+    (bmBool(myCollisionMask & CollisionMask::missile1 & CollisionMask::ball) ? 0x40U : 0U) |
+    (bmBool(myCollisionMask & CollisionMask::missile1 & CollisionMask::playfield) ? 0x80U : 0U)
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::collCXPPMM() const
+{
+  return (
+    (bmBool(myCollisionMask & CollisionMask::missile0 & CollisionMask::missile1) ? 0x40U : 0U) |
+    (bmBool(myCollisionMask & CollisionMask::player0 & CollisionMask::player1) ? 0x80U : 0U)
+  );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 TIA::collCXBLPF() const
+{
+  return bmBool(myCollisionMask & CollisionMask::ball & CollisionMask::playfield) ? 0x80U : 0U;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollP0PF()
+{
+  myCollisionMask ^= (CollisionMask::player0 & CollisionMask::playfield);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollP0BL()
+{
+  myCollisionMask ^= (CollisionMask::player0 & CollisionMask::ball);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollP0M1()
+{
+  myCollisionMask ^= (CollisionMask::player0 & CollisionMask::missile1);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollP0M0()
+{
+  myCollisionMask ^= (CollisionMask::player0 & CollisionMask::missile0);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollP0P1()
+{
+  myCollisionMask ^= (CollisionMask::player0 & CollisionMask::player1);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollP1PF()
+{
+  myCollisionMask ^= (CollisionMask::player1 & CollisionMask::playfield);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollP1BL()
+{
+  myCollisionMask ^= (CollisionMask::player1 & CollisionMask::ball);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollP1M1()
+{
+  myCollisionMask ^= (CollisionMask::player1 & CollisionMask::missile1);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollP1M0()
+{
+  myCollisionMask ^= (CollisionMask::player1 & CollisionMask::missile0);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollM0PF()
+{
+  myCollisionMask ^= (CollisionMask::missile0 & CollisionMask::playfield);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollM0BL()
+{
+  myCollisionMask ^= (CollisionMask::missile0 & CollisionMask::ball);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollM0M1()
+{
+  myCollisionMask ^= (CollisionMask::missile0 & CollisionMask::missile1);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollM1PF()
+{
+  myCollisionMask ^= (CollisionMask::missile1 & CollisionMask::playfield);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollM1BL()
+{
+  myCollisionMask ^= (CollisionMask::missile1 & CollisionMask::ball);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::toggleCollBLPF()
+{
+  myCollisionMask ^= (CollisionMask::ball & CollisionMask::playfield);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::updateDumpPorts(uInt8 value)
+{
+  const bool newIsDumped = value & 0x80U;
+
+  if(myArePortsDumped != newIsDumped)
+  {
+    myArePortsDumped = newIsDumped;
+    myDumpPortsCycles = mySystem->cycles();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Int64 TIA::dumpPortsCycles()
+{
+  return mySystem->cycles() - myDumpPortsCycles;
+}
+
+#ifdef DEBUGGER_SUPPORT
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::createAccessArrays()
+{
+  myAccessBase.fill(Device::NONE);
+  myAccessCounter.fill(0);
+  myAccessDelay.fill(TIA_DELAY);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Device::AccessType TIA::getAccessFlags(uInt16 address) const
+{
+  return myAccessBase[address & TIA_MASK];
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::setAccessFlags(uInt16 address, Device::AccessType flags)
+{
+  // ignore none flag
+  if (flags != Device::NONE) {
+    if (flags == Device::WRITE) {
+      // the first two write accesses are assumed as initialization
+      if (myAccessDelay[address & TIA_MASK])
+        myAccessDelay[address & TIA_MASK]--;
+      else
+        myAccessBase[address & TIA_MASK] |= flags;
+    } else
+      myAccessBase[address & TIA_READ_MASK] |= flags;
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void TIA::increaseAccessCounter(uInt16 address, bool isWrite)
+{
+  if(isWrite)
+  {
+    // the first two write accesses are assumed as initialization
+    if(myAccessDelay[address & TIA_MASK])
+      myAccessDelay[address & TIA_MASK]--;
+    else
+      myAccessCounter[address & TIA_MASK]++;
+  }
+  else
+    myAccessCounter[TIA_SIZE + (address & TIA_READ_MASK)]++;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+string TIA::getAccessCounters() const
+{
+  string out;
+
+  out += "TIA reads:\n";
+  for(uInt16 addr = 0x00; addr < TIA_READ_SIZE; ++addr)
+    out += std::format("{},{}, ",
+      Common::Base::toString(addr, Common::Base::Fmt::_16_4),
+      Common::Base::toString(myAccessCounter[TIA_SIZE + addr],
+                             Common::Base::Fmt::_10_8));
+  out += '\n';
+
+  out += "TIA writes:\n";
+  for(uInt16 addr = 0x00; addr < TIA_SIZE; ++addr)
+    out += std::format("{},{}, ",
+      Common::Base::toString(addr, Common::Base::Fmt::_16_4),
+      Common::Base::toString(myAccessCounter[addr],
+                             Common::Base::Fmt::_10_8));
+  out += '\n';
+
+  return out;
+}
+
+#endif  // DEBUGGER_SUPPORT

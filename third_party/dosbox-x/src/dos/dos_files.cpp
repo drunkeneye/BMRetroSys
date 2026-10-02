@@ -1464,8 +1464,8 @@ bool DOS_CommonFAT32FAT16DiskSpaceConv(
 
 	*bytes = bytes32;
 	*sectors = sectors32 * cdiv;
-	*clusters = (uint16_t)MIN(MIN(clusters32 / cdiv,clust2gb),0xFFFFu);
-	*free = (uint16_t)MIN(MIN(free32 / cdiv,clust2gb),0xFFFFu);
+	*clusters = (uint16_t)MIN(MIN(clusters32 / cdiv,clust2gb),(uint32_t)0xFFFFu);
+	*free = (uint16_t)MIN(MIN(free32 / cdiv,clust2gb),(uint32_t)0xFFFFu);
 	return true;
 }
 

@@ -25,6 +25,7 @@
 #include "third_party/common/emux_api.h"
 #include "third_party/common/keycodes.h"
 #include "third_party/dosbox-x/include/keyboard.h"
+#include "third_party/dosbox-x/include/mouse.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -180,17 +181,98 @@ void drain_guest_keys(void) {
   }
 }
 
-// Phase 0 mouse accumulator. Drained by the real poll_input in Phase 3;
-// until then the values just accumulate so the menu mouse layer links.
+// Phase 0 mouse accumulator. Drained by drain_guest_mouse() below, which
+// runs on the same live pump as the key drain (GFX_Events, guest thread).
+// Written from the USB ISR (core0); take-with-subtract so a concurrent
+// add can only delay a delta by one pump, never lose it.
 static int s_mouse_dx = 0;
 static int s_mouse_dy = 0;
 static int s_mouse_buttons = 0;
+// Last button levels forwarded to the guest (edge reconstruction below).
+static int s_mouse_fwd_buttons = 0;
+// Diagnostics: distinguish "no USB deltas" from "swallowed by UI gate"
+// from "forwarded but guest ignores". Logged once + heartbeat totals.
+static bool s_mouse_seen_logged = false;
+static bool s_mouse_fwd_logged = false;
+static unsigned long s_mouse_pumps = 0;
+static long s_mouse_dx_total = 0;
+static long s_mouse_dy_total = 0;
+
+// Forward accumulated USB motion/buttons into the DOSBox-X mouse core.
+// Gated on the BMX menu being closed: the menu owns the pointer while
+// open (separate kernel path), and swallowing there avoids a cursor jump
+// on close. Motion flows to INT33 mickeys + absolute cursor + serial/PS/2
+// (user_cursor_locked / MOUSE_EMULATION_ALWAYS are forced in dos_globals,
+// since bare metal has no window-capture concept). Buttons are level
+// state here but edge events in the guest, hence the baseline.
+void drain_guest_mouse(void) {
+  int dx = s_mouse_dx;
+  s_mouse_dx -= dx;
+  int dy = s_mouse_dy;
+  s_mouse_dy -= dy;
+  const int buttons = s_mouse_buttons;
+  const int ui = emu_is_ui_activated();
+  s_mouse_pumps++;
+  if ((dx != 0 || dy != 0) && !s_mouse_seen_logged) {
+    s_mouse_seen_logged = true;
+    debug_log("dos input: first USB motion dx=%d dy=%d buttons=0x%x ui=%d",
+              dx, dy, buttons, ui);
+  }
+  if (ui) {
+    s_mouse_fwd_buttons = buttons;
+    return;
+  }
+  if (dx != 0 || dy != 0) {
+    s_mouse_dx_total += dx;
+    s_mouse_dy_total += dy;
+    if (!s_mouse_fwd_logged) {
+      s_mouse_fwd_logged = true;
+      debug_log("dos input: first motion forwarded dx=%d dy=%d", dx, dy);
+    }
+    // Relative motion with no host cursor: emulate=true accumulates into
+    // the absolute position (mouse.x += dx). With emulate=false the
+    // backend would instead map the (nonexistent) host position, pinning
+    // INT33 readers like MI1 at the origin on every pump.
+    Mouse_CursorMoved((float)dx, (float)dy, 0.0f, 0.0f, true);
+  }
+  const int changed = buttons ^ s_mouse_fwd_buttons;
+  if (changed != 0) {
+    static bool s_mouse_btn_logged = false;
+    for (int b = 0; b < 3; b++) {
+      if ((changed & (1 << b)) != 0) {
+        if (!s_mouse_btn_logged) {
+          s_mouse_btn_logged = true;
+          debug_log("dos input: first button edge b=%d %s", b,
+                    (buttons & (1 << b)) != 0 ? "down" : "up");
+        }
+        if ((buttons & (1 << b)) != 0) {
+          Mouse_ButtonPressed((uint8_t)b);
+        } else {
+          Mouse_ButtonReleased((uint8_t)b);
+        }
+      }
+    }
+    s_mouse_fwd_buttons = buttons;
+  }
+  if ((s_mouse_pumps & 1023U) == 0U) {
+    static long s_mouse_rep_dx = 0;
+    static long s_mouse_rep_dy = 0;
+    if (s_mouse_dx_total != s_mouse_rep_dx ||
+        s_mouse_dy_total != s_mouse_rep_dy) {
+      debug_log("dos input: mouse pumps=%lu fwd_dx=%ld fwd_dy=%ld",
+                s_mouse_pumps, s_mouse_dx_total, s_mouse_dy_total);
+      s_mouse_rep_dx = s_mouse_dx_total;
+      s_mouse_rep_dy = s_mouse_dy_total;
+    }
+  }
+}
 
 void poll_input(dos_input_t *input) {
   if (input != NULL) {
     input->unused = 0;
   }
   drain_guest_keys();
+  drain_guest_mouse();
 }
 
 // ---- Menu-initiated reboot ------------------------------------------------
@@ -411,6 +493,7 @@ void GFX_Events() {
   }
   bmx::dos::pump_autostart_typer();
   bmx::dos::drain_guest_keys();
+  bmx::dos::drain_guest_mouse();
   ui_handle_toggle_or_quick_func();
   // Audio drain lives here, not in the outer frame loop: the first guest
   // slice (SHELL_Run) never returns, so the outer loop parks forever and

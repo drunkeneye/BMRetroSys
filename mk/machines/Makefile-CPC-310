@@ -1,0 +1,18 @@
+#
+# Makefile for an Amstrad CPC kernel using BMX
+#
+# The CPC core (vendored Z80 + BMX hardware module under src/cpc, plus the
+# ZEsarUX CPU/AY/audio subset from third_party/zesarux) is compiled
+# directly by the main Makefile (BMC64_OBJS + pattern rules), so there are
+# no prebuilt VICE-style libraries to link. This file only selects the
+# machine class and lets the main Makefile do the rest.
+#
+
+MACHINE_CLASS = RASPI_CPC
+
+# Run the CPC frame loop on core 1 like the other machines.
+BMX_EMU_MULTICORE ?= 1
+
+VICELIBS :=
+
+include Makefile

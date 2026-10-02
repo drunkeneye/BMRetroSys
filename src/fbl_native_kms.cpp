@@ -42,6 +42,9 @@
 
 extern "C" {
 #include "third_party/common/circle.h"
+// Machine V3D override (declared in third_party/common/emux_api.h;
+// included locally: the full header collides with viceoptions.h here).
+int bmx_machine_forces_v3d(void);
 }
 
 #ifndef ALIGN_UP
@@ -82,6 +85,13 @@ bool g_kms_hwscale_framebuffer_valid[FB_NUM_LAYERS][kKmsBufferCount] = {};
 unsigned g_kms_hwscale_front_buffer_index[FB_NUM_LAYERS] = {};
 bool g_kms_hwscale_front_buffer_valid[FB_NUM_LAYERS] = {};
 unsigned g_kms_front_buffer_index = 0;
+
+// DIAG: present-path attribution counters (read by machine heartbeats to
+// tell which scanout path actually serves frames: direct hwscale planes,
+// V3D postprocess, or CPU software composition).
+unsigned long g_diag_present_direct = 0;
+unsigned long g_diag_present_v3d = 0;
+unsigned long g_diag_present_soft = 0;
 
 struct DirtyRect {
   int left;
@@ -1090,8 +1100,14 @@ bool FrameBufferLayer::CopyLayerSourceToHwscaleFramebuffer(FrameBufferLayer *lay
                                   &recreated)) {
     return false;
   }
+  // Base (opaque) layers always refresh the selected back buffer: the HVS
+  // direct path ping-pongs hwscale[slot][0/1] via front^1, and reusing a
+  // skipped (pre-scroll) buffer shows the previous frame as glyph ghosts /
+  // flicker blocks. Overlays keep the dirty skip (they have independent
+  // front-buffer tracking in BuildKmsLayerPlane).
   if (!recreated && !layer->dirty_ &&
-      g_kms_hwscale_framebuffer_valid[slot][buffer_index]) {
+      g_kms_hwscale_framebuffer_valid[slot][buffer_index] &&
+      layer->transparency_) {
     return true;
   }
 
@@ -1270,7 +1286,24 @@ bool FrameBufferLayer::TryKmsDirectScanout(FrameBufferLayer **layers,
   }
 
   g_kms_front_buffer_index = buffer_index;
+  // No stale ping-pong: the alternate hwscale copy of a base layer must
+  // never be served. Drop its validity so the next frame is forced to
+  // copy fresh pixels even if that layer's dirty flag was lost somewhere
+  // (pre-scroll glyph ghosts). A true single buffer is unsafe here: the
+  // fence only guarantees the previous frame went active (HVS may still be
+  // scanning it), so the two slots stay but only the fresh one is valid.
+  for (unsigned i = 0; i < layer_count; ++i) {
+    const int presented = layers[i] != nullptr ? layers[i]->layer_ : -1;
+    if (presented == FB_LAYER_VIC || presented == FB_LAYER_VDC) {
+      const unsigned slot = (unsigned)presented;
+      const unsigned other = buffer_index ^ 1U;
+      if (slot < FB_NUM_LAYERS && other < kKmsBufferCount) {
+        g_kms_hwscale_framebuffer_valid[slot][other] = false;
+      }
+    }
+  }
   g_capture_v3d_layer = nullptr;
+  g_diag_present_direct++;
   return true;
 }
 
@@ -1472,6 +1505,7 @@ bool FrameBufferLayer::TryV3dPostprocess(FrameBufferLayer **layers,
     record_v3d_present_stats(
         overlay_mask, present_start_us, overlay_prep_done_us,
         render_done_us, render_done_us);
+    g_diag_present_v3d++;
     return true;
   }
 
@@ -1515,6 +1549,7 @@ bool FrameBufferLayer::TryV3dPostprocess(FrameBufferLayer **layers,
       record_v3d_present_stats(
           overlay_mask, present_start_us, overlay_prep_done_us,
           render_done_us, present_done_us);
+      g_diag_present_v3d++;
       return true;
     }
   }
@@ -1578,6 +1613,7 @@ bool FrameBufferLayer::TryV3dPostprocess(FrameBufferLayer **layers,
     record_v3d_present_stats(
         overlay_mask, present_start_us, overlay_prep_done_us,
         render_done_us, present_done_us);
+    g_diag_present_v3d++;
     return true;
   }
 
@@ -1593,6 +1629,7 @@ bool FrameBufferLayer::TryV3dPostprocess(FrameBufferLayer **layers,
   record_v3d_present_stats(
       overlay_mask, present_start_us, overlay_prep_done_us,
       render_done_us, present_done_us);
+  g_diag_present_v3d++;
   return true;
 }
 
@@ -1992,8 +2029,16 @@ bool FrameBufferLayer::Initialize() {
     g_v3d_effect_params.enable_scanlines = true;
   }
   const bool v3dcrt_requested =
-      options && (options->V3DCrtEnabled() ||
-                  v3dcrt_test != v3dcrt::kBootTestOff);
+      (options && (options->V3DCrtEnabled() ||
+                   v3dcrt_test != v3dcrt::kBootTestOff)) ||
+      // Machine override (MSX): HVS direct shows stale-frame ghosts on
+      // this geometry, so the V3D scaler path is always on. Preset and
+      // effect params are untouched (fresh defaults are effect-free).
+      (bmx_machine_forces_v3d() != 0);
+  if (bmx_machine_forces_v3d() != 0) {
+    printf("boot: " BMX_NATIVE_BOARD_LOG
+           " fbl v3d forced on by machine (hvs direct bypassed)\r\n");
+  }
   g_v3d_scanline_weight_override_enabled =
       options && options->GetV3DCrtScanlineWeight(
           &g_v3d_scanline_weight_override);
@@ -2397,6 +2442,9 @@ void FrameBufferLayer::PresentLayerList(bool sync, FrameBufferLayer **layers,
     return;
   }
 
+  // Reached the CPU software-composition fallback.
+  g_diag_present_soft++;
+
   DirtyRect dirty = {};
   if (!g_software_composition_valid ||
       g_software_composition_interpolation != g_interpolation_enabled) {
@@ -2763,9 +2811,17 @@ bool FrameBufferLayer::Mailbox() const {
 
 void FrameBufferLayer::SetShaderParams(
     const struct bmx_crt_effect_params &params) {
-  g_v3d_effect_params = v3dcrt::EffectParamsFromBmx(params);
+  // Machine locks a clean V3D upscale (MSX): all CRT effects stay off
+  // regardless of menu/saved state. Curated neutral defaults; the
+  // per-frame interpolation flag is still applied by the caller.
+  const bool forced_clean = (bmx_machine_forces_v3d() != 0);
+  if (forced_clean) {
+    g_v3d_effect_params = v3dcrt::DefaultEffectParams();
+  } else {
+    g_v3d_effect_params = v3dcrt::EffectParamsFromBmx(params);
+  }
 
-  if (should_log_v3d_menu_params(params)) {
+  if (!forced_clean && should_log_v3d_menu_params(params)) {
     printf("boot: v3dcrt menu effects geometry=%u convergence=%u "
            "horizontal_filter=%u edge_blur=%u scanlines=%u mask=%u "
            "bloom=%u vignette=%u uneven=%u jitter=%u composite=%u "
@@ -2804,5 +2860,33 @@ void FrameBufferLayer::SetShaderParams(
   uses_shader_ = false;
   if (initialized_) {
     PresentLayerList(false, nullptr, 0);
+  }
+}
+
+// DIAG query for machine heartbeats: which scanout path serves frames and
+// which layers are really in the HVS plane list (vs. stale menu flags).
+extern "C" void circle_diag_present_stats(unsigned long *direct,
+                                          unsigned long *v3d,
+                                          unsigned long *soft, int *kms_active,
+                                          int *show0, int *show1, int *show2,
+                                          int *show3) {
+  if (direct != nullptr) {
+    *direct = g_diag_present_direct;
+  }
+  if (v3d != nullptr) {
+    *v3d = g_diag_present_v3d;
+  }
+  if (soft != nullptr) {
+    *soft = g_diag_present_soft;
+  }
+  if (kms_active != nullptr) {
+    *kms_active = g_kms_active ? 1 : 0;
+  }
+  int *show[FB_NUM_LAYERS] = {show0, show1, show2, show3};
+  for (unsigned i = 0; i < FB_NUM_LAYERS; ++i) {
+    if (show[i] != nullptr) {
+      show[i][0] =
+          (g_layers[i] != nullptr && g_layers[i]->Showing()) ? 1 : 0;
+    }
   }
 }

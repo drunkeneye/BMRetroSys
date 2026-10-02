@@ -1344,7 +1344,7 @@ private:
 //
 // stereo_out must hold 2*frames int16; always returns frames (the callback
 // pads underflows with the last DAC value instead of short-reading).
-Bitu MIXER_BMX_Pull(int16_t *stereo_out, Bitu frames) {
+uint64_t MIXER_BMX_Pull(int16_t *stereo_out, uint64_t frames) {
   if (stereo_out == nullptr || frames == 0) {
     return 0;
   }
@@ -1355,7 +1355,7 @@ Bitu MIXER_BMX_Pull(int16_t *stereo_out, Bitu frames) {
 
 // Mixer output rate (set from the mixer section at MIXER_Init; BMX forces
 // 44100 to match the hardware sink). 0 before MIXER_Init has run.
-Bitu MIXER_BMX_Rate(void) {
-  return (Bitu)mixer.freq;
+uint64_t MIXER_BMX_Rate(void) {
+  return (uint64_t)mixer.freq;
 }
 #endif

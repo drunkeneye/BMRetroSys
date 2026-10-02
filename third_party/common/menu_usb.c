@@ -292,14 +292,14 @@ static void show_usb_monitor(int device) {
   // We want to show button index so have to show log base 2 of value
   raw_buttons_item->map_value_func = map_button_value;
 
-  for (i = 0; i < joy_num_hats[device]; i++) {
-    sprintf(scratch, "Hat %d", i);
+  for (i = 0; i < joy_num_hats[device] && i < MAX_USB_HATS; i++) {
+    snprintf(scratch, sizeof scratch, "Hat %d", i);
     raw_hats_item[i] =
         ui_menu_add_button_with_value(MENU_TEXT, root, scratch, 0, "", "");
   }
 
-  for (i = 0; i < joy_num_axes[device]; i++) {
-    sprintf(scratch, "Axis %d", i);
+  for (i = 0; i < joy_num_axes[device] && i < MAX_USB_AXES; i++) {
+    snprintf(scratch, sizeof scratch, "Axis %d", i);
     raw_axes_item[i] =
         ui_menu_add_button_with_value(MENU_TEXT, root, scratch, 0, "", "");
   }
@@ -313,14 +313,15 @@ static void update_key_binding_descriptions(struct menu_item *new_root,
   char scratch[32];
   struct menu_item *child = new_root->first_child;
   while (child != NULL) {
-     if (child->id >= MENU_USB_0_BTN_ASSIGN && child->id <= MENU_USB_1_BTN_ASSIGN) {
-        for (int n = 0; n < 6; n++) {
-           sprintf (scratch, "Key %d (%s)", n+1,
-              keycode_to_string(key_bindings[n]));
-           strcpy(child->choices[BTN_ASSIGN_CUSTOM_KEY_1 + n],
-              scratch);
-        }
-     }
+      if (child->id >= MENU_USB_0_BTN_ASSIGN && child->id <= MENU_USB_1_BTN_ASSIGN) {
+         for (int n = 0; n < 6; n++) {
+            snprintf (scratch, sizeof scratch, "Key %d (%s)", n+1,
+               keycode_to_string(key_bindings[n]));
+            snprintf(child->choices[BTN_ASSIGN_CUSTOM_KEY_1 + n],
+               sizeof child->choices[BTN_ASSIGN_CUSTOM_KEY_1 + n],
+               "%s", scratch);
+         }
+      }
      child = child->next;
   }
 }
@@ -601,11 +602,15 @@ void emu_set_raw_usb(int device,
   int i;
   if (device == want_raw_usb_device) {
     raw_buttons_item->value = buttons;
-    for (i = 0; i < joy_num_hats[device]; i++) {
-      raw_hats_item[i]->value = hats[i];
+    for (i = 0; i < joy_num_hats[device] && i < MAX_USB_HATS; i++) {
+      if (raw_hats_item[i] != NULL) {
+        raw_hats_item[i]->value = hats[i];
+      }
     }
-    for (i = 0; i < joy_num_axes[device]; i++) {
-      raw_axes_item[i]->value = axes[i];
+    for (i = 0; i < joy_num_axes[device] && i < MAX_USB_AXES; i++) {
+      if (raw_axes_item[i] != NULL) {
+        raw_axes_item[i]->value = axes[i];
+      }
     }
   }
 }

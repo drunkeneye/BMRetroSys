@@ -1,0 +1,6 @@
+ZEsarUX - ZX Second-Emulator And Released for UniX
+Copyright (C) 2013 Cesar Hernandez Bano
+https://github.com/chernandezba/zesarux
+
+Licensed under the GNU General Public License v3 (see the full text in
+third_party/zesarux/LICENSE of the BMRetroSys source tree).

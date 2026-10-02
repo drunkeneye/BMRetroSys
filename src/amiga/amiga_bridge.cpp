@@ -23,12 +23,14 @@
 #include "amiga_input.h"
 #include "amiga_sound.h"
 #include "amiga_video.h"
+#include "src/monitor_phosphor.h"
 
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -79,6 +81,8 @@ struct menu_item *s_aud_voll = NULL;
 struct menu_item *s_aud_volr = NULL;
 struct menu_item *s_aud_vol[4] = {NULL, NULL, NULL, NULL};
 struct menu_item *s_aud_pan[4] = {NULL, NULL, NULL, NULL};
+// CRT monitor emulation row (Color/B&W/Green/Amber, applied at blit time).
+struct menu_item *s_monitor_item = NULL;
 
 }  // namespace
 
@@ -683,6 +687,7 @@ void sync_machine_items(void) {
   if (s_slow_mirror != NULL) {
     s_slow_mirror->value = h.slow_mirror ? 1 : 0;
   }
+  set_choice(s_monitor_item, video_get_monitor());
 }
 
 void sync_drive_setup_items(void) {
@@ -899,6 +904,25 @@ void emux_add_machine_options(struct menu_item *parent) {
   child->choice_ints[3] = 3;
   strcpy(child->choices[4], "Amiga 1200 (AGA, 2MB)");
   child->choice_ints[4] = 4;
+  // Always alphabetical so every kernel lists machines in the same order.
+  for (int i = 1; i < child->num_choices; i++) {
+    char tmp_name[MAX_MENU_STR];
+    snprintf(tmp_name, sizeof tmp_name, "%s", child->choices[i]);
+    int tmp_int = child->choice_ints[i];
+    int tmp_dis = child->choice_disabled[i];
+    int j = i - 1;
+    while (j >= 0 && strcasecmp(child->choices[j], tmp_name) > 0) {
+      snprintf(child->choices[j + 1], sizeof child->choices[j + 1], "%s",
+               child->choices[j]);
+      child->choice_ints[j + 1] = child->choice_ints[j];
+      child->choice_disabled[j + 1] = child->choice_disabled[j];
+      j--;
+    }
+    snprintf(child->choices[j + 1], sizeof child->choices[j + 1], "%s",
+             tmp_name);
+    child->choice_ints[j + 1] = tmp_int;
+    child->choice_disabled[j + 1] = tmp_dis;
+  }
   child = bmx::amiga::s_agnus =
       ui_menu_add_multiple_choice(MENU_AMIGA_AGNUS, parent, (char *)"Agnus");
   child->num_choices = 5;
@@ -985,7 +1009,7 @@ void emux_add_machine_options(struct menu_item *parent) {
   static const char *fast_nm[6] = {"None", "512 KB", "1 MB",
                                    "2 MB", "4 MB",   "8 MB"};
   for (int i = 0; i < 6; i++) {
-    strcpy(child->choices[i], fast_nm[i]);
+    snprintf(child->choices[i], sizeof child->choices[i], "%s", fast_nm[i]);
     child->choice_ints[i] = fast_kb[i];
   }
   bmx::amiga::s_slow_delay = ui_menu_add_toggle(
@@ -997,6 +1021,18 @@ void emux_add_machine_options(struct menu_item *parent) {
   // Kick path is tracked in the config module log.
   ui_menu_add_button(MENU_TEXT, parent, (char *)"Kickstart: see bmretrosys-amiga.log");
   ui_menu_add_button(MENU_ATARI_SCREENSHOT, parent, (char *)"Screenshot");
+  child = bmx::amiga::s_monitor_item = ui_menu_add_multiple_choice(
+      MENU_AMIGA_MONITOR, parent, (char *)"Monitor");
+  child->num_choices = 4;
+  strcpy(child->choices[0], "Color");
+  child->choice_ints[0] = BMX_MONITOR_COLOR;
+  strcpy(child->choices[1], "B&W");
+  child->choice_ints[1] = BMX_MONITOR_BW;
+  strcpy(child->choices[2], "Green");
+  child->choice_ints[2] = BMX_MONITOR_GREEN;
+  strcpy(child->choices[3], "Amber");
+  child->choice_ints[3] = BMX_MONITOR_AMBER;
+  bmx::amiga::set_choice(child, bmx::amiga::video_get_monitor());
   bmx::amiga::sync_machine_items();
 }
 
@@ -1267,6 +1303,7 @@ void emux_save_additional_settings(FILE *fp) {
     fprintf(fp, "amiga_aud_vol%d=%d\n", c, h.aud_vol[c]);
     fprintf(fp, "amiga_aud_pan%d=%d\n", c, h.aud_pan[c]);
   }
+  fprintf(fp, "amiga_monitor=%d\n", bmx::amiga::video_get_monitor());
   for (int d = 0; d < 2; d++) {
     const char *hd = bmx::amiga::config_hd_path(d);
     if (hd != NULL && hd[0] != '\0') {
@@ -1372,6 +1409,12 @@ int emux_handle_loaded_setting(char *name, char *value_str, int value) {
       return 1;
     }
   }
+  if (strcmp(name, "amiga_monitor") == 0) {
+    // Setter clamps garbage; refresh the row so the menu shows it.
+    bmx::amiga::video_set_monitor(value);
+    bmx::amiga::sync_machine_items();
+    return 1;
+  }
   return 0;
 }
 
@@ -1393,6 +1436,12 @@ int emux_handle_menu_change(struct menu_item *item) {
     } else {
       ui_info("Model set for next boot");
     }
+    return 1;
+  }
+  // CRT monitor: per-pixel mapping at blit time, applies instantly
+  // (no reboot, no preview rebuild).
+  if (item->id == MENU_AMIGA_MONITOR && cv >= 0) {
+    bmx::amiga::video_set_monitor(cv);
     return 1;
   }
   // Chipset / CPU / memory: full apply + reboot.
@@ -1573,33 +1622,25 @@ int emux_handle_menu_change(struct menu_item *item) {
     return 1;
   }
   if (item->id == MENU_ATARI_SCREENSHOT) {
-    static const char *kShotDirs[] = {
-        "USER:/systems/AMIGA/snapshots",
-        "SYS:/systems/AMIGA/snapshots",
-        "SD:/systems/AMIGA/snapshots",
-    };
+    // Auto-named BMP dump on SD:/screenshots (never beside snapshots);
+    // the folder is created on demand.
+    bmx_screenshot_mkdir("amiga");
     char path[64];
     bool saved = false;
-    for (size_t d = 0;
-         d < sizeof(kShotDirs) / sizeof(kShotDirs[0]) && !saved; d++) {
-      char dir[48];
-      snprintf(dir, sizeof(dir), "%s", kShotDirs[d]);
-      mkdir(dir, 0777);
-      for (int n = 0; n < 100 && !saved; n++) {
-        snprintf(path, sizeof(path), "%s/shot%02d.bmp", kShotDirs[d], n);
-        FILE *probe = fopen(path, "rb");
-        if (probe != NULL) {
-          fclose(probe);
-          continue;
-        }
-        if (::bmx::amiga::video_save_screenshot(path)) {
-          saved = true;
-          char msg[64];
-          snprintf(msg, sizeof(msg), "Saved shot%02d.bmp", n);
-          ui_info(msg);
-        } else if (n == 0) {
-          break;
-        }
+    for (int n = 0; n < 100 && !saved; n++) {
+      bmx_screenshot_path(path, sizeof(path), "amiga", n);
+      FILE *probe = fopen(path, "rb");
+      if (probe != NULL) {
+        fclose(probe);
+        continue;
+      }
+      if (::bmx::amiga::video_save_screenshot(path)) {
+        saved = true;
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Saved shot%02d.bmp", n);
+        ui_info(msg);
+      } else if (n == 0) {
+        break;
       }
     }
     if (!saved) {

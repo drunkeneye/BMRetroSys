@@ -1,0 +1,86 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#ifndef CARTRIDGE_4K_HXX
+#define CARTRIDGE_4K_HXX
+
+class System;
+
+#include "bspf.hxx"
+#include "CartEnhanced.hxx"
+#ifdef DEBUGGER_SUPPORT
+  #include "Cart4KWidget.hxx"
+#endif
+
+/**
+  This is the standard Atari 4K cartridge, the dominant ROM format for
+  mid-era 2600 titles.  The single 4K image maps directly and without
+  mirroring into the full cartridge address window ($1000-$1FFF).
+  There is no bankswitching.
+
+  @author  Bradford W. Mott, Thomas Jentzsch
+*/
+class Cartridge4K : public CartridgeEnhanced
+{
+  friend class Cartridge4KWidget;
+
+  public:
+    /**
+      Create a new cartridge using the specified image
+
+      @param image     Span of the ROM image
+      @param md5       The md5sum of the ROM image
+      @param settings  A reference to the various settings (read-only)
+      @param bsSize    The size specified by the bankswitching scheme
+    */
+    Cartridge4K(ByteSpan image, string_view md5,
+                const Settings& settings, size_t bsSize = 4_KB);
+    ~Cartridge4K() override = default;
+
+  public:
+    /**
+      Get a descriptor for the device name (used in error checking).
+
+      @return The name of the object
+    */
+    string name() const override { return "Cartridge4K"; }
+
+  #ifdef DEBUGGER_SUPPORT
+    /**
+      Get debugger widget responsible for accessing the inner workings
+      of the cart.
+    */
+    CartDebugWidget* debugWidget(GuiObject* boss, const GUI::Font& lfont,
+        const GUI::Font& nfont) override
+    {
+      return new Cartridge4KWidget(boss, lfont, nfont, *this);
+    }
+  #endif
+
+  private:
+    bool checkSwitchBank(uInt16, uInt8) override { return false; }
+
+  private:
+    // Following constructors and assignment operators not supported
+    Cartridge4K() = delete;
+    Cartridge4K(const Cartridge4K&) = delete;
+    Cartridge4K(Cartridge4K&&) = delete;
+    Cartridge4K& operator=(const Cartridge4K&) = delete;
+    Cartridge4K& operator=(Cartridge4K&&) = delete;
+};
+
+#endif  // CARTRIDGE_4K_HXX

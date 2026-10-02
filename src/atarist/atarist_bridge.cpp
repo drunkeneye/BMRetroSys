@@ -25,6 +25,8 @@
 #include "atarist_sound.h"
 #include "atarist_video.h"
 
+#include "src/monitor_phosphor.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -43,6 +45,7 @@ extern "C" {
 #include "configuration.h"
 #include "m68000.h"
 #include "newcpu.h"
+#include "memorySnapShot.h"
 }
 
 namespace bmx {
@@ -194,12 +197,42 @@ void emux_set_cart_default(void) {
 }
 
 int emux_load_state(char *filename) {
-  (void)filename;
+  // Deferred Hatari restore: the filename is latched and the actual
+  // restore runs in m68k_go() once the menu closes and emulation
+  // resumes (plus a reset, which the restore path performs itself).
+  if (filename == NULL || *filename == '\0') {
+    return -1;
+  }
+  FILE *probe = fopen(filename, "rb");
+  if (probe == NULL) {
+    return -1;
+  }
+  fclose(probe);
+  bmx::atarist::debug_log("load_state: restoring '%s'", filename);
+  MemorySnapShot_Restore(filename, false);
   return 0;
 }
 
 int emux_save_state(char *filename) {
-  (void)filename;
+  // Synchronous capture: the menu pump runs on the emulator thread, so
+  // the core is paused and the snapshot is taken immediately.
+  if (filename == NULL || *filename == '\0') {
+    return -1;
+  }
+  MemorySnapShot_Capture_Immediate(filename, false);
+  FILE *probe = fopen(filename, "rb");
+  if (probe == NULL) {
+    bmx::atarist::debug_log("save_state: capture failed for '%s'", filename);
+    return -1;
+  }
+  fseek(probe, 0, SEEK_END);
+  long size = ftell(probe);
+  fclose(probe);
+  if (size <= 0) {
+    bmx::atarist::debug_log("save_state: empty snapshot '%s'", filename);
+    return -1;
+  }
+  bmx::atarist::debug_log("save_state: OK '%s' (%ld bytes)", filename, size);
   return 0;
 }
 
@@ -508,6 +541,8 @@ struct menu_item *s_drive_status[2] = {NULL, NULL};
 // Machine option rows (built by emux_add_machine_options).
 struct menu_item *s_model_status = NULL;
 struct menu_item *s_tos_item = NULL;
+struct menu_item *s_volume_item = NULL;
+struct menu_item *s_monitor_item = NULL;
 
 const char *drive_basename(const char *path) {
   const char *slash = strrchr(path, '/');
@@ -543,13 +578,22 @@ void sync_machine_items(void) {
   }
   if (s_tos_item != NULL) {
     int want = config_tos_index();
+    s_tos_item->value = 0;
     for (int i = 0; i < s_tos_item->num_choices; i++) {
       if (s_tos_item->choice_ints[i] == want) {
         s_tos_item->value = i;
-        return;
+        break;
       }
     }
-    s_tos_item->value = 0;
+  }
+  if (s_monitor_item != NULL) {
+    const int cur = video_get_monitor();
+    for (int i = 0; i < s_monitor_item->num_choices; i++) {
+      if (s_monitor_item->choice_ints[i] == cur) {
+        s_monitor_item->value = i;
+        break;
+      }
+    }
   }
 }
 
@@ -635,10 +679,14 @@ void emux_add_tape_options(struct menu_item *parent) {
 void emux_add_sound_options(struct menu_item *emulation_parent,
                             struct menu_item *sid_parent,
                             struct menu_item *sound_parent) {
-  // Phase 0: YM2149 + STE DMA rows land in Phase 3.
-  (void)emulation_parent;
   (void)sid_parent;
   (void)sound_parent;
+  // Master volume scales the YM2149 + STE DMA mix in the audio drain.
+  struct menu_item *child = bmx::atarist::s_volume_item =
+      ui_menu_add_range(MENU_ATARIST_VOLUME, emulation_parent,
+                        (char *)"Volume %", 0, 300, 5,
+                        bmx::atarist::sound_get_volume());
+  (void)child;
 }
 
 void emux_add_reu_options(struct menu_item *parent) {
@@ -647,7 +695,7 @@ void emux_add_reu_options(struct menu_item *parent) {
 
 void emux_add_machine_options(struct menu_item *parent) {
   // Model readout (follows the TOS: 2.06 images boot a MegaSTE) plus the
-  // TOS selector over the /roms/tos pool (EmuTOS default). Switching TOS
+  // TOS selector over the /roms/ATARIST pool (EmuTOS default). Switching TOS
   // cold-resets the machine; disks stay inserted.
   bmx::atarist::s_model_status =
       ui_menu_add_button(MENU_TEXT, parent, (char *)"Model: ...");
@@ -666,6 +714,18 @@ void emux_add_machine_options(struct menu_item *parent) {
              bmx::atarist::config_tos_name(i));
     child->choice_ints[i] = i;
   }
+  child = bmx::atarist::s_monitor_item =
+      ui_menu_add_multiple_choice(MENU_ATARIST_MONITOR, parent,
+                                  (char *)"Monitor");
+  child->num_choices = 4;
+  snprintf(child->choices[0], MAX_MENU_STR, "Color");
+  child->choice_ints[0] = BMX_MONITOR_COLOR;
+  snprintf(child->choices[1], MAX_MENU_STR, "B&W");
+  child->choice_ints[1] = BMX_MONITOR_BW;
+  snprintf(child->choices[2], MAX_MENU_STR, "Green");
+  child->choice_ints[2] = BMX_MONITOR_GREEN;
+  snprintf(child->choices[3], MAX_MENU_STR, "Amber");
+  child->choice_ints[3] = BMX_MONITOR_AMBER;
   bmx::atarist::sync_machine_items();
 }
 
@@ -874,6 +934,7 @@ int emux_save_settings(void) {
 }
 
 void emux_load_settings_done(void) {
+  bmx::atarist::sync_machine_items();
 }
 
 void emux_load_additional_settings(void) {}
@@ -883,12 +944,23 @@ void emux_save_additional_settings(FILE *fp) {
     return;
   }
   fprintf(fp, "atarist_tos=%d\n", bmx::atarist::config_tos_index());
+  fprintf(fp, "atarist_volume=%d\n", bmx::atarist::sound_get_volume());
+  fprintf(fp, "atarist_monitor=%d\n", bmx::atarist::video_get_monitor());
 }
 
 int emux_handle_loaded_setting(char *name, char *value_str, int value) {
   (void)value_str;
   if (name != NULL && strcmp(name, "atarist_tos") == 0) {
     bmx::atarist::config_set_tos_index(value);
+    return 1;
+  }
+  if (name != NULL && strcmp(name, "atarist_volume") == 0) {
+    bmx::atarist::sound_set_volume(value);
+    return 1;
+  }
+  if (name != NULL && strcmp(name, "atarist_monitor") == 0) {
+    bmx::atarist::video_set_monitor(value);
+    bmx::atarist::sync_machine_items();
     return 1;
   }
   return 0;
@@ -908,6 +980,26 @@ int emux_handle_menu_change(struct menu_item *item) {
       ui_info("TOS change failed");
     }
     bmx::atarist::sync_machine_items();
+    return 1;
+  }
+  if (item->id == MENU_ATARIST_VOLUME) {
+    int v = item->value;
+    if (v < 0) {
+      v = 0;
+    }
+    if (v > 300) {
+      v = 300;
+    }
+    bmx::atarist::sound_set_volume(v);
+    return 1;
+  }
+  if (item->id == MENU_ATARIST_MONITOR) {
+    int v = item->value;
+    if (v >= 0 && v < item->num_choices) {
+      v = item->choice_ints[v];
+    }
+    // Per-pixel mapping at blit time: applies instantly, no rebuild.
+    bmx::atarist::video_set_monitor(v);
     return 1;
   }
   if (item->id == MENU_ATARI_SCREENSHOT) {

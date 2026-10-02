@@ -8,6 +8,8 @@
 #include "dos_video.h"
 #include "dos_debug.h"
 
+#include "src/monitor_phosphor.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -81,9 +83,14 @@ uint32_t s_shadow[640 * 480] = {0};
 Bitu s_shadow_w = 0;
 Bitu s_shadow_h = 0;
 
+// Active CRT monitor type (Color = identity, default look unchanged).
+int s_monitor = BMX_MONITOR_COLOR;
+
 inline uint16_t xrgb32_to_rgb565(uint32_t p) {
-  return (uint16_t)(((p >> 19) & 0x1f) << 11 | ((p >> 10) & 0x3f) << 5 |
-                    ((p >> 3) & 0x1f));
+  return bmx_monitor_map_565(
+      (uint16_t)(((p >> 19) & 0x1f) << 11 | ((p >> 10) & 0x3f) << 5 |
+                  ((p >> 3) & 0x1f)),
+      s_monitor);
 }
 
 // ---- Menu color adjustments (brightness/contrast/gamma/tint/saturation)
@@ -165,7 +172,8 @@ inline uint16_t xrgb32_to_rgb565_adjusted(uint32_t p) {
   const int ri = (int)(clamp01(r) * 31.0f + 0.5f);
   const int gi = (int)(clamp01(g) * 63.0f + 0.5f);
   const int bi = (int)(clamp01(b) * 31.0f + 0.5f);
-  return (uint16_t)((ri << 11) | (gi << 5) | bi);
+  return bmx_monitor_map_565((uint16_t)((ri << 11) | (gi << 5) | bi),
+                             s_monitor);
 }
 
 // ScalerLineHandler_t: TempLine holds s_src_w XRGB32 pixels for row
@@ -429,6 +437,15 @@ void video_get_color_adjustments(int *brightness, int *contrast, int *gamma,
     *saturation = s_col_sat;
   }
 }
+
+void video_set_monitor(int mode) {
+  if (!bmx_monitor_valid(mode)) {
+    return;
+  }
+  s_monitor = mode;
+}
+
+int video_get_monitor(void) { return s_monitor; }
 
 // Repaints the canvas from the source shadow with current color settings.
 // Called on every slider change (menu thread) so the preview behind the

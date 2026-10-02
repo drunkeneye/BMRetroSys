@@ -1,0 +1,87 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#ifndef CARTRIDGE_DFSC_HXX
+#define CARTRIDGE_DFSC_HXX
+
+class System;
+
+#include "bspf.hxx"
+#include "CartDF.hxx"
+#ifdef DEBUGGER_SUPPORT
+  #include "CartDFSCWidget.hxx"
+#endif
+
+/**
+  DFSC is DF with 128 bytes of SuperChip RAM.  Banking works identically to
+  DF: 32 4K banks (128K total), selected by accessing $1FC0-$1FDF.  The SC
+  RAM uses the standard split window: write port $1000-$107F, read port
+  $1080-$10FF.
+
+  @author  Stephen Anthony, Thomas Jentzsch
+*/
+class CartridgeDFSC : public CartridgeDF
+{
+  friend class CartridgeDFSCWidget;
+
+  public:
+    /**
+      Create a new cartridge using the specified image
+
+      @param image     Span of the ROM image
+      @param md5       The md5sum of the ROM image
+      @param settings  A reference to the various settings (read-only)
+      @param bsSize    The size specified by the bankswitching scheme
+    */
+    CartridgeDFSC(ByteSpan image, string_view md5,
+                  const Settings& settings, size_t bsSize = 128_KB);
+    ~CartridgeDFSC() override = default;
+
+  public:
+    /**
+      Get a descriptor for the device name (used in error checking).
+
+      @return The name of the object
+    */
+    string name() const override { return "CartridgeDFSC"; }
+
+  #ifdef DEBUGGER_SUPPORT
+    /**
+      Get debugger widget responsible for accessing the inner workings
+      of the cart.
+    */
+    CartDebugWidget* debugWidget(GuiObject* boss, const GUI::Font& lfont,
+        const GUI::Font& nfont) override
+    {
+      return new CartridgeDFSCWidget(boss, lfont, nfont, *this);
+    }
+  #endif
+
+  private:
+    // RAM size
+    static constexpr size_t RAM_SIZE = 0x80;
+
+private:
+    // Following constructors and assignment operators not supported
+    CartridgeDFSC() = delete;
+    CartridgeDFSC(const CartridgeDFSC&) = delete;
+    CartridgeDFSC(CartridgeDFSC&&) = delete;
+    CartridgeDFSC& operator=(const CartridgeDFSC&) = delete;
+    CartridgeDFSC& operator=(CartridgeDFSC&&) = delete;
+};
+
+#endif  // CARTRIDGE_DFSC_HXX

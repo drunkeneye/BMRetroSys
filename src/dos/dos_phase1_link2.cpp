@@ -226,13 +226,13 @@ avi_writer_stream *avi_writer_new_stream(avi_writer *w) {
 }
 void avi_writer_stream_header(avi_writer_stream *s) { (void)s; }
 void avi_writer_stream_set_format(avi_writer_stream *s, void *fmt,
-                                  unsigned long len) {
+                                   size_t len) {
   (void)s; (void)fmt; (void)len;
 }
 void avi_writer_set_stream_writing(avi_writer *w) { (void)w; }
 void avi_writer_begin_data(avi_writer *w) { (void)w; }
 void avi_writer_stream_write(avi_writer *w, avi_writer_stream *s, void *buf,
-                             unsigned long len, unsigned int flags) {
+                              size_t len, uint32_t flags) {
   (void)w; (void)s; (void)buf; (void)len; (void)flags;
 }
 void avi_writer_end_data(avi_writer *w) { (void)w; }
@@ -248,7 +248,7 @@ void riff_wav_writer_set_format(riff_wav_writer *w, windows_WAVEFORMAT *fmt) {
 }
 void riff_wav_writer_begin_data(riff_wav_writer *w) { (void)w; }
 void riff_wav_writer_data_write(riff_wav_writer *w, void *buf,
-                                unsigned long len) {
+                                size_t len) {
   (void)w; (void)buf; (void)len;
 }
 void riff_wav_writer_end_data(riff_wav_writer *w) { (void)w; }

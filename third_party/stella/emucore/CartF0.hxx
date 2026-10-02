@@ -1,0 +1,88 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#ifndef CARTRIDGE_F0_HXX
+#define CARTRIDGE_F0_HXX
+
+#include "CartEnhanced.hxx"
+#ifdef DEBUGGER_SUPPORT
+  #include "CartF0Widget.hxx"
+#endif
+
+/**
+  Cartridge class used for the Dynacom Megaboy (also known as the F0 scheme).
+  The cart holds 16 4K banks (64K total).  Unlike schemes that select a bank
+  by address, F0 uses a sequential "next bank" trigger: any access to $1FF0
+  advances to the next bank in sequence, wrapping from bank 15 back to bank 0.
+  Because the game cannot jump to an arbitrary bank, the program layout must
+  be structured so that each bank is visited in order.
+
+  @author  Eckhard Stolberg, Thomas Jentzsch
+*/
+class CartridgeF0 : public CartridgeEnhanced
+{
+  friend class CartridgeF0Widget;
+
+  public:
+    /**
+      Create a new cartridge using the specified image
+
+      @param image     Span of the ROM image
+      @param md5       The md5sum of the ROM image
+      @param settings  A reference to the various settings (read-only)
+      @param bsSize    The size specified by the bankswitching scheme
+    */
+    CartridgeF0(ByteSpan image, string_view md5,
+                const Settings& settings, size_t bsSize = 64_KB);
+    ~CartridgeF0() override = default;
+
+  public:
+    /**
+      Get a descriptor for the device name (used in error checking).
+
+      @return The name of the object
+    */
+    string name() const override { return "CartridgeF0"; }
+
+  #ifdef DEBUGGER_SUPPORT
+    /**
+      Get debugger widget responsible for accessing the inner workings
+      of the cart.
+    */
+    CartDebugWidget* debugWidget(GuiObject* boss, const GUI::Font& lfont,
+        const GUI::Font& nfont) override
+    {
+      return new CartridgeF0Widget(boss, lfont, nfont, *this);
+    }
+  #endif
+
+    uInt16 hotspot() const override { return 0x1FF0; }
+
+  private:
+    bool checkSwitchBank(uInt16 address, uInt8 value) override;
+    uInt16 getStartBank() const override { return 15; }
+
+  private:
+    // Following constructors and assignment operators not supported
+    CartridgeF0() = delete;
+    CartridgeF0(const CartridgeF0&) = delete;
+    CartridgeF0(CartridgeF0&&) = delete;
+    CartridgeF0& operator=(const CartridgeF0&) = delete;
+    CartridgeF0& operator=(CartridgeF0&&) = delete;
+};
+
+#endif  // CARTRIDGE_F0_HXX

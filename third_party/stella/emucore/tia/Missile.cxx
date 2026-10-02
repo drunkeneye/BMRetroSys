@@ -1,0 +1,377 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#include "Missile.hxx"
+#include "DrawCounterDecodes.hxx"
+#include "TIA.hxx"
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Missile::Missile(CollisionMask collisionMask)
+  : myCollisionMaskDisabled{collisionMask}
+{
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::reset()
+{
+  myDecodes = DrawCounterDecodes::get().missileDecodes()[myDecodesOffset];
+  myIsEnabled = false;
+  myEnam = false;
+  myResmp = 0;
+  myHmmClocks = 0;
+  myCounter = 0;
+  isMoving = false;
+  myWidth = 1;
+  myEffectiveWidth = 1;
+  myIsRendering = false;
+  myIsVisible = false;
+  myRenderCounter = 0;
+  myCopy = 1;
+  myColor = myObjectColor = myDebugColor = 0;
+  myDebugEnabled = false;
+  collision = myCollisionMaskDisabled;
+  myInvertedPhaseClock = false;
+  myUseInvertedPhaseClock = false;
+  myUseShortLateHMove = false;
+  myUseLateRespx = false;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::enam(uInt8 value)
+{
+  const auto oldEnam = myEnam;
+
+  myEnam = (value & 0x02U) > 0;
+
+  if (oldEnam != myEnam) {
+    // ENAM toggling changes whether the missile contributes pixels — flush
+    // since cached pixels were rendered with the old enable state. Guarded
+    // optimization.
+    myTIA->flushLineCache();
+
+    updateEnabled();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::hmm(uInt8 value)
+{
+  myHmmClocks = (U32(value) >> 4U) ^ 0x08U;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::resm(uInt8 counter, bool hblank, bool lateRespxCondition)
+{
+  if (myUseLateRespx && lateRespxCondition)
+    counter = (counter + TIAConstants::H_PIXEL - 1) % TIAConstants::H_PIXEL;
+
+  myCounter = counter;
+
+  if (myIsRendering) {
+    if (myRenderCounter < 0) {
+      myRenderCounter = Count::renderCounterOffset + (counter - 157);
+
+    } else {
+      // The following is an effective description of the behavior of missile width after a
+      // RESMx during draw. It would be much simpler without the HBLANK cases :)
+
+      switch (myWidth) {
+        case 8:
+          myRenderCounter = (counter - 157) + ((myRenderCounter >= 4) ? 4 : 0);
+          break;
+
+        case 4:
+          myRenderCounter = (counter - 157);
+          break;
+
+        case 2:
+          if (hblank) myIsRendering = myRenderCounter > 1;
+          else if (myRenderCounter == 0) ++myRenderCounter;
+
+          break;
+
+        default:
+          if (hblank) myIsRendering = myRenderCounter > 0;
+
+          break;
+      }
+    }
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::resmp(uInt8 value)
+{
+  const uInt8 resmp = value & 0x02U;
+
+  if (resmp == myResmp) return;
+
+  // RESMP gates the missile's effective enabled state AND its position
+  // tracking (when set, the missile locks to its player). Either way the
+  // visible behaviour changes for the rest of the line.
+  myTIA->flushLineCache();
+
+  myResmp = resmp;
+
+  updateEnabled();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::toggleCollisions(bool enabled)
+{
+  myCollisionMaskEnabled = enabled ? CollisionMask::ALL : (CollisionMask::VISIBLE | myCollisionMaskDisabled);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::toggleEnabled(bool enabled)
+{
+  myIsSuppressed = !enabled;
+  updateEnabled();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::nusiz(uInt8 value)
+{
+  static constexpr std::array<uInt8, 4> ourWidths = { 1, 2, 4, 8 };
+
+  myDecodesOffset = value & 0x07U;
+  myWidth = ourWidths[(value & 0x30U) >> 4U];
+  myDecodes = DrawCounterDecodes::get().missileDecodes()[myDecodesOffset];
+
+  if (myIsRendering && std::cmp_greater_equal(myRenderCounter, myWidth))
+    myIsRendering = false;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::startMovement()
+{
+  isMoving = true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::nextLine()
+{
+  myIsVisible = myIsRendering && (myRenderCounter >= 0);
+  collision = (myIsVisible && myIsEnabled) ? myCollisionMaskEnabled : myCollisionMaskDisabled;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::setColor(uInt8 color)
+{
+  // Same pattern as Player::setColor — the "&& myIsEnabled" guard is an
+  // optimization that skips flushes when the missile isn't emitting.
+  if (color != myObjectColor && myIsEnabled)  myTIA->flushLineCache();
+
+  myObjectColor = color;
+  applyColors();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::setDebugColor(uInt8 color)
+{
+  // Debug palette override changed.
+  myTIA->flushLineCache();
+  myDebugColor = color;
+  applyColors();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::enableDebugColors(bool enabled)
+{
+  // Debug color source toggled.
+  myTIA->flushLineCache();
+  myDebugEnabled = enabled;
+  applyColors();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::applyColorLoss()
+{
+  // PAL color-loss LSB flip on the rendered color.
+  myTIA->flushLineCache();
+  applyColors();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::setInvertedPhaseClock(bool enable)
+{
+  myUseInvertedPhaseClock = enable;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::setShortLateHMove(bool enable)
+{
+  myUseShortLateHMove = enable;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::setLateRespx(bool enable)
+{
+  myUseLateRespx = enable;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::updateEnabled()
+{
+  myIsEnabled = !myIsSuppressed && myEnam && !myResmp;
+
+  collision = (myIsVisible && myIsEnabled) ? myCollisionMaskEnabled : myCollisionMaskDisabled;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::applyColors()
+{
+  if (!myDebugEnabled)
+  {
+    if (myTIA->colorLossActive()) myObjectColor |= 0x01U;
+    else                          myObjectColor &= 0xfeU;
+    myColor = myObjectColor;
+  }
+  else
+    myColor = myDebugColor;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 Missile::getColor() const
+{
+  if(!myDebugEnabled)
+    return myColor;
+  else
+    switch (myCopy)
+    {
+      case 2:
+        return myColor - 2;
+      case 3:
+        return myColor + 2;
+      default:
+        return myColor;
+    }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+uInt8 Missile::getPosition() const
+{
+  // position =
+  //    current playfield x +
+  //    (current counter - 156 (the decode clock of copy 0)) +
+  //    clock count after decode until first pixel +
+  //    1 (it'll take another cycle after the decode for the rendter counter to start ticking)
+  //
+  // The result may be negative, so we add 160 and do the modulus
+  //
+  // Mind the sign of renderCounterOffset: it's defined negative above
+  return (317 - myCounter - Count::renderCounterOffset + myTIA->getPosition()) % TIAConstants::H_PIXEL;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void Missile::setPosition(uInt8 newPosition)
+{
+  // Debugger-only direct counter move; same reasoning as Player::setPosition.
+  myTIA->flushLineCache();
+
+  // See getPosition for an explanation
+  myCounter = (317 - newPosition - Count::renderCounterOffset + myTIA->getPosition()) % TIAConstants::H_PIXEL;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Missile::save(Serializer& out) const
+{
+  try
+  {
+    out.putShort(Bitmask::to_underlying(collision));
+    out.putShort(Bitmask::to_underlying(myCollisionMaskDisabled));
+    out.putShort(Bitmask::to_underlying(myCollisionMaskEnabled));
+
+    out.putBool(myIsEnabled);
+    out.putBool(myIsSuppressed);
+    out.putBool(myEnam);
+    out.putByte(myResmp);
+
+    out.putByte(myHmmClocks);
+    out.putByte(myCounter);
+    out.putBool(isMoving);
+    out.putByte(myWidth);
+    out.putByte(myEffectiveWidth);
+
+    out.putBool(myIsVisible);
+    out.putBool(myIsRendering);
+    out.putByte(myRenderCounter);
+    out.putByte(myCopy);
+
+    out.putByte(myDecodesOffset);
+
+    out.putByte(myColor);
+    out.putByte(myObjectColor);  out.putByte(myDebugColor);
+    out.putBool(myDebugEnabled);
+    out.putBool(myInvertedPhaseClock);
+    out.putBool(myUseLateRespx);
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA_Missile::save\n";
+    return false;
+  }
+
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool Missile::load(Serializer& in)
+{
+  try
+  {
+    collision = Bitmask::from_underlying<CollisionMask>(in.getShort());
+    myCollisionMaskDisabled = Bitmask::from_underlying<CollisionMask>(in.getShort());
+    myCollisionMaskEnabled = Bitmask::from_underlying<CollisionMask>(in.getShort());
+
+    myIsEnabled = in.getBool();
+    myIsSuppressed = in.getBool();
+    myEnam = in.getBool();
+    myResmp = in.getByte();
+
+    myHmmClocks = in.getByte();
+    myCounter = in.getByte();
+    isMoving = in.getBool();
+    myWidth = in.getByte();
+    myEffectiveWidth = in.getByte();
+
+    myIsVisible = in.getBool();
+    myIsRendering = in.getBool();
+    myRenderCounter = in.getByte();
+    myCopy = in.getByte();
+
+    // Mask as in setNusiz(); the decode table has only 8 entries, so an
+    // out-of-range offset from a corrupt save file must not index past it
+    myDecodesOffset = in.getByte() & 0x07U;
+    myDecodes = DrawCounterDecodes::get().missileDecodes()[myDecodesOffset];
+
+    myColor = in.getByte();
+    myObjectColor = in.getByte();  myDebugColor = in.getByte();
+    myDebugEnabled = in.getBool();
+    myInvertedPhaseClock = in.getBool();
+    myUseLateRespx = in.getBool();
+
+    applyColors();
+  }
+  catch(...)
+  {
+    cerr << "ERROR: TIA_Missile::load\n";
+    return false;
+  }
+
+  return true;
+}

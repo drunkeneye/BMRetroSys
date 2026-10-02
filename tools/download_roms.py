@@ -13,14 +13,16 @@ copyrighted ROMs redistributed there; fetching is opt-out via
 
 Layout (repo-relative):
   roms/<machine-lower>/...   persistent cache (c64, c128, vic20, plus4,
-                             pet, drives, scpu64, a800, amiga, tos)
+                             pet, drives, scpu64, a800, amiga, tos, cpc, msx)
   third_party/vice-3.10/data/<MACHINE>/...
                              build/stage input (populated by copying new
                              VICE downloads out of the cache)
-  roms/a800/...              staged 1:1 to SD /roms/atari800 (atari800
+  roms/a800/...              staged 1:1 to SD /roms/ATARI800 (atari800
                              matches by CRC32/size, so upstream names kept)
-  roms/amiga/kick*.A*        staged 1:1 to SD /roms/kick
-  roms/tos/tos*.img          staged 1:1 to SD /roms/tos
+  roms/amiga/kick*.A*        staged 1:1 to SD /roms/AMIGA
+  roms/tos/tos*.img          staged 1:1 to SD /roms/ATARIST
+  roms/msx/msx.rom           staged 1:1 to SD /roms/MSX (user-supplied
+                             MSX1 BIOS+BASIC 32K; see fetch_msx)
 
 Files already present (size > 0) are never re-downloaded. New downloads
 are length-checked when the server reports one. Failures warn loudly but
@@ -82,6 +84,30 @@ TOS_IMAGES = [
      "TOS v2.06 (1991)(Atari Corp)(Mega-STE)(GB).zip"),
 ]
 TOS_IMG_SIZE = 262144
+
+# Amstrad CPC firmware parts from TomHarte/CLK on GitHub (Amstrad
+# permitted redistribution of CPC ROMs for emulation; stable pinned
+# source, verified 2026-09-29 via the GitHub contents API: all parts
+# 16K, matching the kernel's split-ROM layout os+basic[+amsdos]).
+CPC_BASE = ("https://raw.githubusercontent.com/TomHarte/CLK/master/"
+            "ROMImages/AmstradCPC/")
+CPC_PARTS = [
+    "os464.rom",
+    "basic464.rom",
+    "os664.rom",
+    "basic664.rom",
+    "os6128.rom",
+    "basic6128.rom",
+    "amsdos.rom",
+]
+CPC_PART_SIZE = 16384
+
+# MSX system ROM: no stable direct-download source is wired (OpenMSX BIOS
+# sets move; C-BIOS SourceForge layout is JS-driven). Place a 32K MSX1
+# BIOS+BASIC image at roms/msx/msx.rom by hand (or pass --only=msx to see
+# the instructions); staging carries it 1:1 to /roms/MSX/.
+MSX_ROM_NAME = "msx.rom"
+MSX_ROM_SIZE = 32768
 
 # (cache dir, vice-data dir or None, filename as staging needs it).
 # Mirrors the features=["roms"] entries in sd-layout.toml.
@@ -602,21 +628,65 @@ def fetch_tos():
     return got, skipped, failed
 
 
+def fetch_cpc():
+    """CPC firmware parts from TomHarte/CLK into roms/cpc/ (split names)."""
+    dest_dir = os.path.join(CACHE, "cpc")
+    os.makedirs(dest_dir, exist_ok=True)
+    got, skipped, failed = 0, 0, []
+    for name in CPC_PARTS:
+        dest = os.path.join(dest_dir, name)
+        if present(dest):
+            skipped += 1
+            continue
+        url = CPC_BASE + name
+        print("  get %s" % name)
+        data = fetch_bytes(url)
+        if data is None or len(data) != CPC_PART_SIZE:
+            print("  SIZE-MISMATCH %s" % name)
+            failed.append(name)
+            continue
+        if write_file(dest, data):
+            got += 1
+        else:
+            failed.append(name)
+    return got, skipped, failed
+
+
+def fetch_msx():
+    """MSX system ROM: ensure cache dir, report status (manual supply)."""
+    dest_dir = os.path.join(CACHE, "msx")
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, MSX_ROM_NAME)
+    if present(dest):
+        if os.path.getsize(dest) == MSX_ROM_SIZE:
+            return 0, 1, []
+        print("  SIZE-MISMATCH %s (want %d)" % (MSX_ROM_NAME, MSX_ROM_SIZE))
+        return 0, 0, [MSX_ROM_NAME]
+    print("  msx: place a 32K MSX1 BIOS+BASIC image at roms/msx/msx.rom")
+    print("  (e.g. Philips VG-8020 from an OpenMSX BIOS set, or C-BIOS")
+    print("  cbios_main_msx1.rom renamed to msx.rom)")
+    return 0, 0, [MSX_ROM_NAME]
+
+
 def main():
     only = set(a[7:] for a in sys.argv[1:] if a.startswith("--only="))
     do_vice = not only or "vice" in only or "c64" in only
     do_atari = not only or "atari" in only or "a800" in only
     do_amiga = not only or "amiga" in only or "kick" in only
     do_tos = not only or "tos" in only or "atarist" in only or "st" in only
+    do_cpc = not only or "cpc" in only or "amstrad" in only
+    do_msx = not only or "msx" in only
 
     # Staging copies repo pools 1:1 (both.tree requires the source to
     # exist, even when empty), so the cache dirs always exist afterwards
     # — even fully offline, when there is nothing to put in them yet.
     for cache_dir, _, _ in VICE_ROMS:
         os.makedirs(os.path.join(CACHE, cache_dir), exist_ok=True)
+    os.makedirs(os.path.join(CACHE, "msx"), exist_ok=True)
     os.makedirs(os.path.join(CACHE, "a800"), exist_ok=True)
     os.makedirs(os.path.join(CACHE, "amiga"), exist_ok=True)
     os.makedirs(os.path.join(CACHE, "tos"), exist_ok=True)
+    os.makedirs(os.path.join(CACHE, "cpc"), exist_ok=True)
 
     total_failed = []
     net_ok = dns_preflight()
@@ -667,6 +737,21 @@ def main():
             print("  tos: %d fetched, %d present, %d failed" %
                   (got, skipped, len(failed)))
             total_failed += ["tos:" + n for n in failed]
+    if do_msx:
+        print("MSX system ROM (user-supplied, see above):")
+        got, skipped, failed = fetch_msx()
+        print("  msx: %d fetched, %d present, %d failed" %
+              (got, skipped, len(failed)))
+        total_failed += ["msx:" + n for n in failed]
+    if do_cpc:
+        print("Amstrad CPC firmware (TomHarte/CLK):")
+        if not net_ok:
+            print("  cpc: offline, skipping")
+        else:
+            got, skipped, failed = fetch_cpc()
+            print("  cpc: %d fetched, %d present, %d failed" %
+                  (got, skipped, len(failed)))
+            total_failed += ["cpc:" + n for n in failed]
     if total_failed:
         print("STILL MISSING (%d):" % len(total_failed))
         for n in total_failed:

@@ -35,6 +35,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <sys/stat.h>
 
 // RASPI includes
 #include "emux_api.h"
@@ -227,7 +228,11 @@ static void ui_load_appearance_settings(void) {
   ui_menu_row_gap = UI_MENU_ROW_GAP_DEFAULT;
   ui_menu_mouse_enabled = UI_MENU_MOUSE_DEFAULT;
   ui_menu_mouse_drag_speed = UI_MENU_MOUSE_DRAG_SPEED_DEFAULT;
-  fp = fopen("/settings-ui.txt", "r");
+  fp = fopen("/settings/settings-ui.txt", "r");
+  if (fp == NULL) {
+    // Legacy location (card root) for pre-move setups.
+    fp = fopen("/settings-ui.txt", "r");
+  }
   if (fp == NULL) {
     return;
   }
@@ -277,7 +282,8 @@ static void ui_load_appearance_settings(void) {
 }
 
 int ui_save_appearance_settings(void) {
-  FILE *fp = fopen("/settings-ui.txt", "w");
+  mkdir("/settings", 0777);
+  FILE *fp = fopen("/settings/settings-ui.txt", "w");
   int failed;
 
   if (fp == NULL) {
@@ -1190,6 +1196,14 @@ static void ui_action(long action) {
       }
     } else if (cur->type == MULTIPLE_CHOICE) {
       int orig = cur->value;
+      if (cur->num_choices < 1) {
+        break;
+      }
+      if (orig < 0 || orig >= cur->num_choices) {
+        cur->value = 0;
+        ui_menu_commit(menu_cursor_item[current_menu]);
+        break;
+      }
       cur->value -= 1;
       if (cur->value < 0) {
         cur->value = cur->num_choices - 1;
@@ -1197,9 +1211,12 @@ static void ui_action(long action) {
       // NOTE: This doesn't support the first choice being disabled!
       while (cur->choice_disabled[cur->value] && cur->value != orig) {
         cur->value -= 1;
+        if (cur->value < 0) {
+          cur->value = cur->num_choices - 1;
+        }
       }
-      if (cur->value < 0) {
-        cur->value = cur->num_choices - 1;
+      if (cur->choice_disabled[cur->value]) {
+        cur->value = orig;
       }
       ui_menu_commit(menu_cursor_item[current_menu]);
     } else if (cur->type == TOGGLE) {
@@ -1240,12 +1257,23 @@ static void ui_action(long action) {
       }
     } else if (cur->type == MULTIPLE_CHOICE) {
       int orig = cur->value;
+      if (cur->num_choices < 1) {
+        break;
+      }
+      if (orig < 0 || orig >= cur->num_choices) {
+        cur->value = 0;
+        ui_menu_commit(menu_cursor_item[current_menu]);
+        break;
+      }
       cur->value += 1;
       if (cur->value >= cur->num_choices) {
         cur->value = 0;
       }
       while (cur->choice_disabled[cur->value] && cur->value != orig) {
         cur->value = (cur->value + 1) % cur->num_choices;
+      }
+      if (cur->choice_disabled[cur->value]) {
+        cur->value = orig;
       }
       ui_menu_commit(menu_cursor_item[current_menu]);
     } else if (cur->type == TOGGLE) {
@@ -1286,12 +1314,23 @@ static void ui_action(long action) {
       ui_menu_commit(menu_cursor_item[current_menu]);
     } else if (cur->type == MULTIPLE_CHOICE) {
       int orig = cur->value;
+      if (cur->num_choices < 1) {
+        break;
+      }
+      if (orig < 0 || orig >= cur->num_choices) {
+        cur->value = 0;
+        ui_menu_commit(menu_cursor_item[current_menu]);
+        break;
+      }
       cur->value += 1;
       if (cur->value >= cur->num_choices) {
         cur->value = 0;
       }
       while (cur->choice_disabled[cur->value] && cur->value != orig) {
         cur->value = (cur->value + 1) % cur->num_choices;
+      }
+      if (cur->choice_disabled[cur->value]) {
+        cur->value = orig;
       }
       ui_menu_commit(menu_cursor_item[current_menu]);
     } else if (cur->type == TEXTFIELD) {
@@ -2205,10 +2244,56 @@ void ui_menu_set_text_field_display(struct menu_item *item, int width_chars,
   item->text_field_right_align = right_align;
 }
 
+// Marquee label for the cursor row of file browsers. Returns node->name
+// unless the full name in str_value is wider than the row, in which case
+// a scrolling window of str_value is returned (static buffer, single
+// menu thread). Render-driven: advances a step every few frames, holds
+// both ends so head and tail (extension) are readable.
+static const char *ui_browser_marquee_label(struct menu_item *node,
+                                            int indent) {
+  static char marquee_buf[MAX_STR_VAL_LEN + 8];
+  static const struct menu_item *marquee_item = NULL;
+  static unsigned marquee_ticks = 0;
+  const char *full = node->str_value;
+  size_t full_len = strlen(full);
+  size_t disp_len = strlen(node->displayed_value);
+  int x_off;
+  int visible;
+
+  while (disp_len > 0 && node->displayed_value[disp_len - 1] == ' ') {
+    disp_len--;
+  }
+  x_off = (indent + 1) * 8;
+  visible = (node->menu_width - x_off - ((int)disp_len * 8 + 8)) / 8;
+  if (visible < 8) {
+    visible = 8;
+  }
+  if (full_len <= (size_t)visible) {
+    marquee_item = NULL;
+    return node->name;
+  }
+  if (node != marquee_item) {
+    marquee_item = node;
+    marquee_ticks = 0;
+  }
+  marquee_ticks++;
+  {
+    size_t span = full_len - (size_t)visible;
+    unsigned period = (unsigned)span + 12U;
+    unsigned t = marquee_ticks < 24U ? 0U : (marquee_ticks - 24U) / 8U;
+    unsigned off = t % period;
+    if (off > span) {
+      off = (unsigned)span;
+    }
+    memcpy(marquee_buf, full + off, (size_t)visible);
+    marquee_buf[visible] = '\0';
+  }
+  return marquee_buf;
+}
+
 static void ui_render_children(struct menu_item *node,
                                int stack_index, int *index, int indent,
-                               int row_pitch) {
-  while (node != NULL) {
+                               int row_pitch) {  while (node != NULL) {
     if (node->hidden) {
       node->render_index = -1;
       node = node->next;
@@ -2240,7 +2325,19 @@ static void ui_render_children(struct menu_item *node,
       if (!ui_render_current_item_only ||
           *index == menu_cursor[stack_index]) {
 
-        ui_draw_text_encoded_buf(node->name,
+        const char *label = node->name;
+        // File-browser rows show a shortened name (head + "..." + tail, see
+        // shorten_browser_item_name in menu.c). On the cursor row, scroll
+        // the full name from str_value so the whole filename, including
+        // the extension, is readable.
+        if (*index == menu_cursor[stack_index] &&
+            (node->sub_id == MENU_SUB_PICK_FILE ||
+             node->sub_id == MENU_SUB_PICK_ZIPFILE ||
+             node->sub_id == MENU_SUB_ENTER_DIR ||
+             node->sub_id == MENU_SUB_ENTER_ZIPDIR)) {
+          label = ui_browser_marquee_label(node, indent);
+        }
+        ui_draw_text_encoded_buf(label,
            node->menu_left + (indent + 1) * 8, y, colour, NULL, 0, 1,
            node->name_encoding);
 
@@ -3230,6 +3327,7 @@ void ui_disable_osd(void) {
   // pop and toggle to dismiss OSDs which does the
   // right thing.
   circle_hide_fbl(FB_LAYER_UI);
+  ui_showing = 0;
 }
 
 void ui_dismiss_osd_if_active(void) {

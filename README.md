@@ -1,15 +1,7 @@
-# BMRetroSys 0.2
+# BMRetroSys 0.3
 
 BMRetroSys is bare-metal emulation for the Raspberry Pi 4/5 family:
 ten 8-bit and 16-bit computers on one SD card, no Linux underneath.
-
-| Family | Machines |
-| --- | --- |
-| Commodore 8-bit | C64 (fast + cycle-exact cores), SuperCPU 64, C128, VIC-20, Plus/4, PET — via VICE 3.10 |
-| Atari 8-bit | 400/800/XL/XE/5200 — via atari800 |
-| Atari 16-bit | ST/STE/Mega ST/Mega STE — via Hatari, EmuTOS built in, genuine TOS pool |
-| Amiga | A1000/A500/A500+/A1200 (OCS/ECS/AGA) — via vAmiga, DF0–DF3, HDF hard disks, snapshots |
-| PC 16-bit | 286 DOS — via DOSBox-X |
 
 This is a fork of [BMX](https://github.com/kdre/bmx) at commit
 `81efb7e` (public source export 2026.08.19). All credit for the
@@ -19,11 +11,26 @@ work is legendary. Every change on
 top of that base is mine; upstream history is preserved verbatim in
 [`CHANGELOG_BMX.md`](CHANGELOG_BMX.md).
 
+
+
+| Family | Machines |
+| --- | --- |
+| Commodore 8-bit | C64 (fast + cycle-exact cores), SuperCPU 64, C128, VIC-20, Plus/4, PET — via VICE 3.10 |
+| Atari 8-bit | 400/800/XL/XE/5200 — via atari800 |
+| Atari 16-bit | ST/STE/Mega ST/Mega STE — via Hatari, EmuTOS built in, genuine TOS pool |
+| Sinclair | ZX Spectrum 48k/128k/+2/+2A/+3, Pentagon, Inves — via ZEsarUX, in-menu model select |
+| Amiga | A1000/A500/A500+/A1200 (OCS/ECS/AGA) — via vAmiga, DF0–DF3, HDF hard disks, snapshots |
+| PC 16-bit | 286 DOS — via DOSBox-X |
+| Atari 2600 | 2600 — via Stella, cartridges, console-switch shortcuts |
+
+
+## AI all over the place
+
 > Built with AI assistance: vibe-coded with Muse Spark 1.3 via
 > [opencode.ai](https://opencode.ai). This is not a fully supported
 > release, it is unclear whether any reported bugs will ever be
-> fixed. It runs the Numen and Control demos, and that is enough
-> for me, right now, right here.
+> fixed. And there a lot of bugs, AI is real human here, e.g.,
+> MSX sound is scrambled. 
 
 
 ## SD-card layout
@@ -35,8 +42,11 @@ pools under `roms/` — the same tree on every install:
 systems/C64/{carts,disks,snapshots,tapes[,prg]}  ... one dir per machine
 systems/AMIGA/{disks,hdf,snapshots}              ... for everything it owns
 systems/ATARIST/{disks,snapshots}                ...
-roms/C64, roms/drives, ...                       ... system ROMs + keymaps
-roms/kick, roms/tos, roms/ATARI800               ... firmware pools
+systems/MSX/{snapshots}                          ... flat: carts/tapes/zips loose
+systems/A2600/{snapshots}                        ... flat: cartridges loose
+roms/C64, roms/DRIVES, ...                     ... system ROMs + keymaps
+roms/AMIGA, roms/ATARIST, ...                   ... firmware pools (TOS/Kick live
+                                                  inside the machine folders)
 ```
 
 (One folder per machine for everything it owns; shared pools stay
@@ -44,9 +54,24 @@ flat under `roms/`. Case is significant on paper, irrelevant on the
 FAT32 card.)
 
 
+## What changed (0.3)
+
+- New machine: Atari 2600 (vendored Stella core, cartridge slot,
+  splash logo, F12 menu, Select/Reset keyboard shortcuts defaulting
+  to Space/Enter and remappable, persisted).
+- Monitor emulation everywhere (Color/B&W/Green/Amber, applied live):
+  per-pixel phosphor mapping on MSX, Spectrum, CPC, Amiga, ST, DOS
+  and 2600 (Atari 8-bit already had it); VICE machines get the
+  upstream green/amber `.vpl` palettes in the Palette menu (plus
+  generated green/amber variants for VIC20, Plus/4 and the C128 VDC).
+- ZIP browser opens ROM packs with non-ASCII names (French/Portuguese
+  DOS codepages and UTF-8 fold to FAT-safe ASCII; strict firmware
+  update flow unchanged).
+- Full list: [`CHANGELOG.md`](CHANGELOG.md).
+
 ## What changed (0.2)
 
-- Product rename BMX8bit → BMRetroSys (About, logs, SD paths, docs;
+- Rename BMX8bit → BMRetroSys (About, logs, SD paths, docs;
   C identifiers intentionally unchanged).
 - `systems/<machine>/…` content layout + `roms/…` firmware pools, with
   archive.org ROM fetching (Kickstarts, TOS) and per-machine staging.

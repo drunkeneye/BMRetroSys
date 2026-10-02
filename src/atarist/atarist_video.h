@@ -25,6 +25,12 @@ void video_set_color_adjustments(int brightness, int contrast, int gamma,
 void video_get_color_adjustments(int *brightness, int *contrast, int *gamma,
                                  int *tint, int *saturation);
 
+// CRT monitor emulation (Color/B&W/Green/Amber, shared
+// src/monitor_phosphor.h mapping): luma-driven phosphor mapping applied to
+// every presented pixel. Color mode is the identity (default look unchanged).
+void video_set_monitor(int mode);
+int video_get_monitor(void);
+
 // Dumps the current emulator frame as uncompressed 24-bit BMP.
 // Phase 0: no frame yet, always returns false.
 bool video_save_screenshot(const char *path);

@@ -1,0 +1,91 @@
+//============================================================================
+//
+//   SSSS    tt          lll  lll
+//  SS  SS   tt           ll   ll
+//  SS     tttttt  eeee   ll   ll   aaaa
+//   SSSS    tt   ee  ee  ll   ll      aa
+//      SS   tt   eeeeee  ll   ll   aaaaa  --  "An Atari 2600 VCS Emulator"
+//  SS  SS   tt   ee      ll   ll  aa  aa
+//   SSSS     ttt  eeeee llll llll  aaaaa
+//
+// Copyright (c) 1995-2026 by Bradford W. Mott, Stephen Anthony
+// and the Stella Team
+//
+// See the file "License.txt" for information on usage and redistribution of
+// this file, and for a DISCLAIMER OF ALL WARRANTIES.
+//============================================================================
+
+#ifndef CARTRIDGE_4KSC_HXX
+#define CARTRIDGE_4KSC_HXX
+
+class System;
+
+#include "bspf.hxx"
+#include "Cart4K.hxx"
+#ifdef DEBUGGER_SUPPORT
+  #include "Cart4KSCWidget.hxx"
+#endif
+
+/**
+  Cartridge class used for 4K games with 128 bytes of SuperChip RAM.
+  "SC" denotes the SuperChip, a small static RAM chip present on some Atari
+  PCB revisions.  The 128 bytes are mapped with a split read/write window:
+  the write port occupies $1000-$107F and the read port occupies $1080-$10FF
+  (an $80 offset into the same RAM).  Because of this, ROM addresses in the
+  range $1000-$107F are inaccessible; games using this scheme must place all
+  code and data above $1080.
+
+  @author  Stephen Anthony, Thomas Jentzsch
+*/
+
+class Cartridge4KSC : public Cartridge4K
+{
+  friend class Cartridge4KSCWidget;
+
+  public:
+    /**
+      Create a new cartridge using the specified image
+
+      @param image     Span of the ROM image
+      @param md5       The md5sum of the ROM image
+      @param settings  A reference to the various settings (read-only)
+      @param bsSize    The size specified by the bankswitching scheme
+    */
+    Cartridge4KSC(ByteSpan image, string_view md5,
+                  const Settings& settings, size_t bsSize = 4_KB);
+    ~Cartridge4KSC() override = default;
+
+  public:
+    /**
+      Get a descriptor for the device name (used in error checking).
+
+      @return The name of the object
+    */
+    string name() const override { return "Cartridge4KSC"; }
+
+  #ifdef DEBUGGER_SUPPORT
+    /**
+      Get debugger widget responsible for accessing the inner workings
+      of the cart.
+    */
+    CartDebugWidget* debugWidget(GuiObject* boss, const GUI::Font& lfont,
+        const GUI::Font& nfont) override
+    {
+      return new Cartridge4KSCWidget(boss, lfont, nfont, *this);
+    }
+  #endif
+
+  private:
+    // RAM size
+    static constexpr size_t RAM_SIZE = 0x80;
+
+  private:
+    // Following constructors and assignment operators not supported
+    Cartridge4KSC() = delete;
+    Cartridge4KSC(const Cartridge4KSC&) = delete;
+    Cartridge4KSC(Cartridge4KSC&&) = delete;
+    Cartridge4KSC& operator=(const Cartridge4KSC&) = delete;
+    Cartridge4KSC& operator=(Cartridge4KSC&&) = delete;
+};
+
+#endif  // CARTRIDGE_4KSC_HXX
