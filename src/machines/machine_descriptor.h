@@ -18,6 +18,10 @@ enum class MachineId {
   CPC,
   MSX,
   A2600,
+  MAC68K,
+  MAC128K,
+  APPLE2,
+  BBC,
 };
 
 struct MachineCycleProfile {

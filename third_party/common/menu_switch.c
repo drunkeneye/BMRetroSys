@@ -324,6 +324,18 @@ static BMC64MachineClass parse_machine_class(const char *name) {
   if (strcasecmp(name, "A2600") == 0) {
     return BMC64_MACHINE_CLASS_A2600;
   }
+  if (strcasecmp(name, "MAC68K") == 0) {
+    return BMC64_MACHINE_CLASS_MAC68K;
+  }
+  if (strcasecmp(name, "MAC128K") == 0) {
+    return BMC64_MACHINE_CLASS_MAC128K;
+  }
+  if (strcasecmp(name, "APPLE2") == 0) {
+    return BMC64_MACHINE_CLASS_APPLE2;
+  }
+  if (strcasecmp(name, "BBC") == 0) {
+    return BMC64_MACHINE_CLASS_BBC;
+  }
   return BMC64_MACHINE_CLASS_UNKNOWN;
 }
 
@@ -992,6 +1004,7 @@ static int normal_machine_kernel_name(const char *name, size_t length) {
   static const char *const machines[] = {
       "c64", "c64sc", "scpu64", "c128", "vic20", "plus4", "pet", "atari800",
       "dos", "atarist", "amiga", "zxspectrum", "cpc", "msx", "a2600",
+      "mac68k", "mac128k", "apple2", "bbc",
   };
   size_t i;
 
@@ -1120,6 +1133,14 @@ static const char *kernel_suffix_for_machine_class(
       return ".msx";
     case BMC64_MACHINE_CLASS_A2600:
       return ".a2600";
+    case BMC64_MACHINE_CLASS_MAC68K:
+      return ".mac68k";
+    case BMC64_MACHINE_CLASS_MAC128K:
+      return ".mac128k";
+    case BMC64_MACHINE_CLASS_APPLE2:
+      return ".apple2";
+    case BMC64_MACHINE_CLASS_BBC:
+      return ".bbc";
     default:
       return NULL;
   }

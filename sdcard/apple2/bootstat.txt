@@ -1,0 +1,5 @@
+Apple II boot ROM status.
+
+The APPLE2 kernel carries user-supplied ROMs on the SD card (/roms/APPLE2,
+see ROMS.txt) and verifies sizes at boot, so no fast-stat hints are needed
+here.

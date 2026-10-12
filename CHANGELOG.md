@@ -1,3 +1,10 @@
+Version 0.4 (2026-10-12)
+------------------
+* New: Apple II machine (GSplus/KEGS core, .apple2 kernels, /roms/APPLE2 pool auto-assembled from MAME dumps on archive.org: IIgs ROM 3/ROM 01 + //e, systems/APPLE2 content tree; Slot 6/5/7 disks, monitor/color options, screenshots).
+* New: Macintosh 128K machine (Mini vMac -m 128K core, .mac128k kernels, /roms/MAC128K 64K-ROM pool, systems/MAC128K content tree).
+* New: Macintosh 68k machine (Basilisk II interpreter core, .mac68k kernels, /roms/MAC68K user-ROM pool, systems/MAC68K content tree).
+* New: BBC Micro machine (CLK core, .bbc kernels, /roms/BBC pool auto-downloaded from MAME dumps on archive.org: MOS 1.20 + BASIC II + 1770 DFS 2.26 (+ADFS 1.30), systems/BBC content tree; Model B DFS/ADFS/cassette, 2x1770 DFS drives, SHIFT+BREAK autostart, Color/B&W/Green/Amber monitor, screenshots, Pi5 fan curve menu).
+
 Version 0.3 (2026-10-02)
 ------------------
 * New: Atari 2600 machine (vendored Stella core, cartridge slot,

@@ -1,0 +1,402 @@
+//
+//  ROMCatalogue.hpp
+//  Clock Signal
+//
+//  Created by Thomas Harte on 01/06/2021.
+//  Copyright © 2021 Thomas Harte. All rights reserved.
+//
+
+#pragma once
+
+#include <algorithm>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
+#include <vector>
+
+namespace ROM {
+
+enum Name {
+	None,
+
+	// Acorn Archimedes.
+	AcornArthur030,
+	AcornRISCOS200,
+	AcornRISCOS311,
+	AcornRISCOS319,
+
+	// Acorn 8-bit.
+	AcornBASICII,
+
+	// Acorn Electron.
+	AcornElectronMOS100,
+	AcornADFS,
+	Acorn1770DFS,
+	AcornIDEADFS103,
+	AcornPlus1,
+
+	PRESADFSSlot1,
+	PRESADFSSlot2,
+	PRESAdvancedPlus6,
+
+	// Amiga.
+	AmigaKickstart10,
+	AmigaKickstart11,
+	AmigaKickstart12,
+	AmigaA500Kickstart13,
+	AmigaA3000Kickstart13,
+	AmigaKickstart20,
+	AmigaA500PlusKickstart204,
+	AmigaA600Kickstart205,
+	AmigaA500Kickstart31,
+
+	AmigaDiagROM121,
+
+	// Amstrad CPC.
+	AMSDOS,
+	CPC464Firmware,		CPC464BASIC,
+	CPC664Firmware,		CPC664BASIC,
+	CPC6128Firmware,	CPC6128BASIC,
+
+	// Apple II.
+	AppleIIOriginal,
+	AppleIIPlus,
+	AppleIICharacter,
+	AppleIIe,
+	AppleIIeCharacter,
+	AppleIIEnhancedE,
+	AppleIIEnhancedECharacter,
+	AppleIISCSICard,
+
+	// Apple IIgs.
+	AppleIIgsROM00,
+	AppleIIgsROM01,
+	AppleIIgsROM03,
+	AppleIIgsMicrocontrollerROM03,
+	AppleIIgsCharacter,
+
+	// Atari ST.
+	AtariSTTOS100,
+	AtariSTTOS104,
+
+	// BBC Micro.
+	BBCMicroMOS12,
+	BBCMicro8271DFS09,
+	BBCMicro1770DFS226,
+	BBCMicroADFS130,
+	BBCMicroAdvancedDiscToolkit140,
+	BBCMicro6502Tube110,
+	BBCMicroZ80Tube122,
+
+	// ColecoVision.
+	ColecoVisionBIOS,
+
+	// Commodore 1540/1541.
+	Commodore1540,
+	Commodore1541,
+
+	// Disk II.
+	DiskIIStateMachine16Sector,
+	DiskIIBoot16Sector,
+	DiskIIStateMachine13Sector,
+	DiskIIBoot13Sector,
+
+	// Dragon.
+	Dragon32,
+	Dragon64ROM1,
+	TanoDragon64ROM1,
+	Dragon64ROM2,
+
+	// Enterprise.
+	EnterpriseEXOS10,
+	EnterpriseEXOS20,
+	EnterpriseEXOS21,
+	EnterpriseEXOS23,
+
+	EnterpriseBASIC10,
+	EnterpriseBASIC10Part1,
+	EnterpriseBASIC10Part2,
+	EnterpriseBASIC11,
+	EnterpriseBASIC11Suffixed,
+	EnterpriseBASIC21,
+
+	EnterpriseEPDOS,
+	EnterpriseEXDOS,
+
+	// Macintosh.
+	Macintosh128k,
+	Macintosh512k,
+	MacintoshPlus,
+
+	// Master System.
+	MasterSystemJapaneseBIOS,
+	MasterSystemWesternBIOS,
+
+	// MSX.
+	MSXGenericBIOS,
+	MSXJapaneseBIOS,
+	MSXAmericanBIOS,
+	MSXEuropeanBIOS,
+	MSXDOS,
+
+	MSX2GenericBIOS,
+	MSX2Extension,
+	MSXMusic,
+
+	// Oric.
+	OricColourROM128,
+	OricColourROM256,
+	OricPravetzColourROM,
+	OricBASIC10,
+	OricBASIC11,
+	OricPravetzBASIC,
+	OricByteDrive500,
+	OricJasmin,
+	OricMicrodisc,
+	Oric8DOSBoot,
+
+	// PC Compatible.
+	PCCompatibleGLaBIOS,
+	PCCompatibleGLaTICK,
+	PCCompatiblePhoenix80286BIOS,
+
+	PCCompatibleIBMATBIOS,
+	PCCompatibleIBMATBIOSNov85U27,
+	PCCompatibleIBMATBIOSNov85U47,
+
+	PCCompatibleMDAFont,
+	PCCompatibleCGAFont,
+	PCCompatibleEGABIOS,
+	PCCompatibleVGABIOS,
+
+	IBMBASIC110,
+
+	// Plus 4.
+	Plus4KernelPALv3,
+	Plus4KernelPALv4,
+	Plus4KernelPALv5,
+	Plus4BASIC,
+
+	// Sinclair QL.
+	SinclairQLJS,
+
+	// Tandy CoCo.
+	TandyCoCoColourBasic10,
+	TandyCoCoColourBasic11,
+	TandyCoCoColourBasic12,
+	TandyCoCoColourBasic13,
+	TandyCoCoColourBasic14,
+
+	TandyExtendedBASIC10,
+	TandyExtendedBASIC11,
+
+	TandyCoCoDiskBASIC10,
+	TandyCoCoDiskBASIC11,
+	TandyCoCoDiskBASIC21,
+
+	// Thomson MO and TO machines.
+	ThomsonMO5v1,
+	ThomsonMO5v11,
+	ThomsonMO6v1,
+	ThomsonMO6v2,
+	ThomsonMO6v3,
+	OlivettiProdest128,
+
+	ThomsonCD90_640,
+
+	// Vic-20.
+	Vic20BASIC,
+	Vic20EnglishCharacters,
+	Vic20EnglishPALKernel,
+	Vic20EnglishNTSCKernel,
+	Vic20DanishCharacters,
+	Vic20DanishKernel,
+	Vic20JapaneseCharacters,
+	Vic20JapaneseKernel,
+	Vic20SwedishCharacters,
+	Vic20SwedishKernel,
+
+	// ZX80/81.
+	ZX80,
+	ZX81,
+
+	// ZX Spectrum.
+	Spectrum48k,
+	Spectrum128k,
+	SpectrumPlus2,
+	SpectrumPlus3,
+
+};
+
+using Map = std::map<ROM::Name, std::vector<uint8_t>>;
+
+struct Description {
+	/// The ROM's enum name.
+	Name name = Name::None;
+	/// The machine with which this ROM is associated, in a form that is safe for using as
+	/// part of a file name.
+	std::string machine_name;
+	/// A descriptive name for this ROM, suitable for use in a bullet-point list, a bracket
+	/// clause, etc, e.g. "the Electron MOS 1.0".
+	std::string descriptive_name;
+	/// All idiomatic file name for this ROM, e.g. "os10.rom".
+	std::vector<std::string> file_names;
+	/// The expected size of this ROM in bytes, e.g. 32768.
+	size_t size = 0;
+	/// CRC32s for all known acceptable copies of this ROM; intended to allow a host platform
+	/// to test user-provided ROMs of unknown provenance. **Not** intended to be used
+	/// to exclude ROMs where the user's intent is otherwise clear.
+	std::set<uint32_t> crc32s;
+
+	/// Constructs the @c Description that correlates to @c name.
+	Description(Name name);
+
+	/// Constructs the @c Description that correlates to @c crc32, if any.
+	static std::optional<Description> from_crc(uint32_t crc32);
+
+	enum DescriptionFlag {
+		Size = 1 << 0,
+		CRC = 1 << 1,
+		Filename = 1 << 2,
+	};
+
+	/// Provides a single-line of text describing this ROM, including the usual base text
+	/// plus all the fields provided as @c flags .
+	std::string description(int flags) const;
+
+private:
+	template <typename FileNameT, typename CRC32T> Description(
+		const Name name,
+		const char *machine_name,
+		const char *descriptive_name,
+		const FileNameT &file_names,
+		const size_t size,
+		const CRC32T crc32s = uint32_t(0)
+	) :
+		name{name},
+		machine_name{machine_name},
+		descriptive_name{descriptive_name},
+		file_names{file_names},
+		size{size},
+		crc32s{crc32s}
+	{
+		// Slightly lazy: deal with the case where the constructor wasn't provided with any
+		// CRCs by spotting that the set has exactly one member, which has value 0. The alternative
+		// would be to provide a partial specialisation that never put anything into the set.
+		if(this->crc32s.size() == 1 && !*this->crc32s.begin()) {
+			this->crc32s.clear();
+		}
+	}
+
+	static const std::vector<Description> &all_roms();
+};
+
+/// @returns a vector of all possible instances of ROM::Description — i.e. descriptions of every ROM
+/// currently known to the ROM catalogue.
+std::vector<Description> all_descriptions();
+
+struct Request {
+	Request(Name);
+	Request() = default;
+
+	// TODO: the following is definitely not const correct.
+
+	/// Returns this request, but makes it optional.
+	Request optional();
+
+	/// Forms the request that would be satisfied by @c this plus the right-hand side.
+	Request operator &&(const Request &);
+
+	/// Forms the request that would be satisfied by either @c this or the right-hand side.
+	Request operator ||(const Request &);
+
+	/// Inspects the ROMMap to ensure that it satisfies this @c Request.
+	/// @c returns @c true if the request is satisfied; @c false otherwise.
+	///
+	/// All ROMs in the map will be resized to their idiomatic sizes.
+	bool validate(Map &) const;
+
+	/// Returns a flattened array of all @c ROM::Descriptions that relate to anything
+	/// anywhere in this ROM request.
+	std::vector<Description> all_descriptions() const;
+
+	/// @returns @c true if this request is empty, i.e. would be satisfied with no ROMs; @c false otherwise.
+	bool empty();
+
+	/// @returns what remains of this ROM request given that everything in @c map has been found.
+	Request subtract(const Map &map) const;
+
+	enum class ListType {
+		Any, All, Single
+	};
+	void visit(
+		const std::function<void(ListType, size_t size)> &enter_list,
+		const std::function<void(void)> &exit_list,
+		const std::function<void(ROM::Request::ListType, const ROM::Description &, bool is_optional, size_t remaining)>
+			&add_item
+	) const;
+
+	enum class LineItem {
+		NewList, Description
+	};
+	void visit(
+		const std::function
+			<void(LineItem, ListType, int level, const ROM::Description *, bool is_optional, size_t remaining)>
+				&add_item
+	) const;
+
+	/// @returns a full bullet-pointed list of the requirements of this request, including
+	/// appropriate conjuntives. This text is intended to be glued to the end of an opening
+	/// portion of a sentence, e.g. "Please supply" + request.description(0, L'*').
+	std::wstring description(int description_flags, wchar_t bullet_point);
+
+private:
+	struct Node {
+		enum class Type {
+			Any, All, One
+		};
+		Type type = Type::One;
+		Name name = Name::None;
+		/// @c true if this ROM is optional for machine startup. Generally indicates something
+		/// that would make emulation more accurate, but not sufficiently so to make it
+		/// a necessity.
+		bool is_optional = false;
+		std::vector<Node> children;
+
+		bool empty() const {
+			return type == Type::One && name == Name::None;
+		}
+
+		void add_descriptions(std::vector<Description> &) const;
+		bool validate(Map &) const;
+		void visit(
+			const std::function<void(ListType, size_t)> &enter_list,
+			const std::function<void(void)> &exit_list,
+			const std::function
+				<void(ROM::Request::ListType, const ROM::Description &, bool is_optional, size_t remaining)>
+					&add_item
+		) const;
+		bool subtract(const Map &map);
+		void sort() {
+			// Don't do a full sort, but move anything optional to the back.
+			// This makes them print more nicely; it's a human-facing tweak only.
+			ssize_t index = ssize_t(children.size() - 1);
+			bool has_seen_non_optional = false;
+			while(index >= 0) {
+				has_seen_non_optional |= !children[size_t(index)].is_optional;
+				if(children[size_t(index)].is_optional && has_seen_non_optional) {
+					std::rotate(children.begin() + index, children.begin() + index + 1, children.end());
+				}
+				--index;
+			}
+		}
+	};
+	Node node;
+
+	Request append(Node::Type type, const Request &rhs);
+};
+
+}

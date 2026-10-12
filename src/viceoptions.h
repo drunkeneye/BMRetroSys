@@ -69,7 +69,6 @@ public:
   ~ViceOptions(void);
 
   unsigned GetMachineTiming(void) const;
-  bool DemoEnabled(void) const;
   bool SerialEnabled(void) const;
   bool GPIOOutputsEnabled(void) const;
   bool DeveloperModeEnabled(void) const;
@@ -148,7 +147,6 @@ private:
   char *m_pOptions;
 
   unsigned m_nMachineTiming;
-  bool m_bDemoEnabled;
   bool m_bSerialEnabled;
   bool m_bGPIOOutputsEnabled;
   bool m_bDeveloperModeEnabled;

@@ -1,0 +1,15 @@
+BBC Micro system ROMs (/roms/BBC on the SD card).
+
+Model B with 1770 DFS, one file per ROM (all 16384 bytes, CLK
+ROMCatalogue conventions):
+
+  os12.rom        16384 bytes = MOS OS 1.20 (CLK BBCMicroMOS12)
+  basic2.rom      16384 bytes = Acorn BASIC II (CLK AcornBASICII)
+  dfs226.rom      16384 bytes = Acorn 1770 DFS 2.26 (CLK BBCMicro1770DFS226)
+  adfs130.rom     16384 bytes = Acorn ADFS 1.30 (CLK BBCMicroADFS130,
+                                optional; the kernel boots DFS-only)
+
+Missing pieces: run tools/download_roms.py --only=bbc on the build
+host (fetches all four files out of MAME dumps on archive.org; see
+BBC_* in tools/download_roms.py) or copy genuine dumps with the exact
+names above into /roms/BBC/ by hand.

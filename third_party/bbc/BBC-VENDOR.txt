@@ -1,0 +1,88 @@
+BBC Micro core vendored from Tom Harte's CLK (MIT licensed):
+https://github.com/TomHarte/CLK
+
+Upstream commit: 5e4ff31 (master, Oct 2026) -- shallow clone at
+~/code/CLK. Only the BBC Micro (Model B, 1770 DFS) subset is vendored;
+all other machines, tape/analyser parsers and OS bindings are excluded.
+
+Vendored directories (complete):
+  Processors/6502Mk2        6502 CPU (header-only, self-contained decoder)
+  Components/6845           Motorola CRTC
+  Components/6522           2x MOS VIA (system + user)
+  Components/6850           Motorola ACIA (serial line unconnected)
+  Components/SN76489        TI sound chip
+  Components/SAA5050        Mullard teletext serialiser (MODE 7)
+  Components/uPD7002        NEC ADC (analogue joysticks)
+  Components/1770           WD1770 FDC logic
+  Outputs/CRT               analogue CRT model (Flywheel/RectAccumulator)
+  Outputs/Speaker           speaker resampling chain
+  Outputs/ScanTarget.hpp    host video interface (implemented in src/bbc)
+  Outputs/Log.hpp           compile-time gated logging (no-op under NDEBUG)
+  ClockReceiver/            cycle/time types
+  Numeric/                  fixed-size int helpers, curves
+  Concurrency/SpinLock.hpp  atomics-only spin lock (bare-metal safe)
+  Inputs/                   keyboard/joystick abstractions
+  Activity/                 drive-lamp/activity observers
+  Configurable/             user-friendly options (dynamic crop)
+  Reflection/               options reflection
+  SignalProcessing/         FIR filter (speaker low-pass)
+
+Vendored files (selected):
+  Machines/Acorn/BBCMicro/{BBCMicro.hpp,BBCMicro.cpp,Keyboard.hpp}
+  Machines/Acorn/Floppy/{1770.hpp,1770.cpp}
+  Machines/{TimedMachine,ScanProducer,AudioProducer,MediaTarget,
+    KeyboardMachine,JoystickMachine,Resettable,ROMMachine}.hpp(+cpp)
+  Machines/Utility/{ROMCatalogue,MemoryFuzzer,Typer}.hpp+cpp
+  Analyser/Static/StaticAnalyser.hpp, Analyser/Machines.hpp,
+    Analyser/Static/Acorn/Target.hpp (target struct only; no parsers)
+  Storage/{Storage.hpp,FileHolder.hpp,FileHolder.cpp}
+  Storage/Disk/{Disk.hpp,Drive.hpp,Drive.cpp}
+  Storage/Disk/Controller/{DiskController,MFMDiskController}.hpp+cpp
+  Storage/Disk/Track/*, Storage/Disk/Encodings/MFM/*, Storage/Disk/DPLL/*
+  Storage/Disk/DiskImage/{DiskImage.hpp,DiskImageImplementation.hpp}
+  Storage/Disk/DiskImage/Formats/{SSD,AcornADF,MFMSectorDump}.hpp+cpp
+  Storage/Disk/DiskImage/Formats/Utility/ImplicitSectors.hpp+cpp
+  Storage/Disk/Parsers/*.hpp (headers only, for MFMSectorDump)
+  Machines/MachineTypes.hpp, Machines/MouseMachine.hpp,
+    Machines/StateProducer.hpp (interface headers)
+  Machines/Acorn/Tube/*.hpp (headers only; WDC65C02/Z80 tube variants
+    instantiate at compile time via create()'s switch but never run)
+  Processors/Z80/{Z80.hpp,Implementation/Z80Storage.cpp,
+    Implementation/PartialMachineCycle.cpp} (+ parse-only headers
+    Z80/Implementation/*, Inputs/Mouse.hpp, Numeric/RegisterSizes.hpp)
+    -- Z80 tube member linkage only
+  Processors/Bus/{Data,PartialAddresses}.hpp
+  Components/{Serial/Line.hpp+cpp,SID/SID.hpp+cpp} (ACIA line; BeebSID
+    member instantiated even when disabled)
+  Outputs/ScanTarget.cpp (NullScanTarget singleton)
+  Storage/{TimedEventLoop.hpp+cpp,Cartridge/Cartridge.hpp,
+    FileBundle/FileBundle.hpp,MassStorage/MassStorageDevice.hpp,
+    Tape/Tape.hpp,TargetPlatforms.hpp}
+  ClockReceiver/{ClockReceiver,ClockingHintSource}.hpp,
+    SignalProcessing/{Stepper,BiquadFilter}.hpp
+
+Excluded: all other Machines/*, all other Storage/Disk/DiskImage/Formats/*,
+Storage/Tape/*, Analyser/Static/Acorn/StaticAnalyser.cpp+Disk.cpp+Tape.cpp,
+OSBindings/*, Tube second processors, BeebSID, Master 128 (CLK's BBCMicro
+core covers Model B/B+ only).
+
+BMX adaptations (no vendored file is modified):
+  bmx-shim/bbc_prefix.h  force-included (-include): no-op std::mutex and
+    std::condition_variable (bare-metal newlib has no threads). Mirrors
+    third_party/stella/bmx-shim/stella_prefix.h. All core objects live on
+    the single emulator thread, so this is correct.
+  bmx-shim/Concurrency/AsyncTaskQueue.hpp  shadows upstream via -I order:
+    synchronous inline queue with identical template/member API. Upstream
+    spawns a std::thread per queue (audio queue); here actions run inline
+    at enqueue time, preserving serial order.
+  Compiler: -std=c++20 (concepts, <=>, span), RTTI kept (CLK uses
+    dynamic_cast in ScanProducer/TimedMachine/Configurable paths; vAmiga
+    precedent allows RTTI), exceptions kept (a2600 precedent).
+
+BMX PATCH P1 (Machines/Acorn/BBCMicro/BBCMicro.cpp, insert_media): map
+  Media.disks[0..1] onto 1770 drives 0/1 (upstream: front -> drive 0
+  only). Needed for the two DFS drives in the menu. Re-setting an
+  unchanged drive only flushes write-back tracks and re-seeks.
+  ROMs (16 KiB each, sideways slots): OS MOS 1.20 (paged C000-FFFF),
+    Acorn BASIC II (slot 15), Acorn 1770 DFS 2.26 (slot 14), optional
+    ADFS 1.30. Fetched by tools/download_roms.py into /roms/BBC.

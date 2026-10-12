@@ -15,6 +15,15 @@
 
 #include "audio_pacing.h"
 #include "kernel.h"
+#ifdef RASPI_MAC128K
+#include "mac128k/mac128k_debug.h"
+#elif defined(RASPI_APPLE2)
+#include "apple2/apple2_debug.h"
+#elif defined(RASPI_BBC)
+#include "bbc/bbc_debug.h"
+#else
+#include "mac68k/mac68k_debug.h"
+#endif
 #include "mouse_input.h"
 #include "third_party/common/gpio_layout.h"
 #include "update/update_service.h"
@@ -1576,6 +1585,22 @@ void CKernel::RunCore0Scheduler(void) {
 
 ViceApp::TShutdownMode CKernel::Run(void) {
   printf("boot: kernel run enter\r\n");
+#ifdef RASPI_MAC68K
+  bmx::mac68k::debug_log("core0: CKernel::Run enter");
+#endif
+#ifdef RASPI_MAC128K
+  bmx::mac128k::debug_log("core0: CKernel::Run enter");
+#endif
+#ifdef RASPI_APPLE2
+  bmx::apple2::debug_log("core0: CKernel::Run enter");
+  // Bootrail milestone 1 (RAM ring; LED proves we got here pre-file).
+  bmx::apple2::bootrail_blink(1);
+#endif
+#ifdef RASPI_BBC
+  bmx::bbc::debug_log("core0: CKernel::Run enter");
+  // Bootrail milestone 1 (RAM ring; LED proves we got here pre-file).
+  bmx::bbc::bootrail_blink(1);
+#endif
 
   printf("boot: setup usb keyboard enter\r\n");
   SetupUSBKeyboard();
@@ -1594,14 +1619,29 @@ ViceApp::TShutdownMode CKernel::Run(void) {
   ApplyUSBDeviceInfo();
 #endif
 
-  emu_set_demo_mode(mViceOptions.DemoEnabled());
-  printf("boot: demo mode set\r\n");
-
   printf("boot: usb plug-and-play ready\r\n");
+#ifdef RASPI_APPLE2
+  // Bootrail milestone 2: USB stack up.
+  bmx::apple2::debug_log("core0: usb ready");
+  bmx::apple2::bootrail_blink(2);
+#endif
+#ifdef RASPI_BBC
+  // Bootrail milestone 2: USB stack up.
+  bmx::bbc::debug_log("core0: usb ready");
+  bmx::bbc::bootrail_blink(2);
+#endif
 
   mUSBPlugAndPlayTask = new USBPlugAndPlayTask(this);
 #ifndef BMC64_USE_EMU_MULTICORE
   printf("boot: launching emulator on core 0\r\n");
+#ifdef RASPI_APPLE2
+  bmx::apple2::debug_log("core0: launching emulator (core0 mode)");
+  bmx::apple2::bootrail_blink(3);
+#endif
+#ifdef RASPI_BBC
+  bmx::bbc::debug_log("core0: launching emulator (core0 mode)");
+  bmx::bbc::bootrail_blink(3);
+#endif
   mEmulatorCore->LaunchEmulator(mTimingOption);
   printf("boot: emulator returned\r\n");
 #else
@@ -1611,6 +1651,16 @@ ViceApp::TShutdownMode CKernel::Run(void) {
   // Pi4 starts Core 1 here so the synchronous legacy display bridge can be
   // serviced immediately. Pi5 keeps its earlier USB-initialization launch.
   printf("multicore: pi4 core 0 dispatcher ready\r\n");
+#ifdef RASPI_APPLE2
+  // Bootrail milestone 3: about to launch the emulator core.
+  bmx::apple2::debug_log("core0: launching emulator");
+  bmx::apple2::bootrail_blink(3);
+#endif
+#ifdef RASPI_BBC
+  // Bootrail milestone 3: about to launch the emulator core.
+  bmx::bbc::debug_log("core0: launching emulator");
+  bmx::bbc::bootrail_blink(3);
+#endif
   mEmulatorCore->LaunchEmulator(mTimingOption);
   printf("boot: emulator launched\r\n");
 #endif

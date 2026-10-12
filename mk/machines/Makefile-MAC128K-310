@@ -1,0 +1,19 @@
+#
+# Makefile for a MAC128K kernel using BMX
+#
+# The Macintosh 128K core (vendored Mini vMac under
+# third_party/minivmac, plus the BMX hardware module under
+# src/mac128k) is compiled directly by the main Makefile (BMC64_OBJS +
+# pattern rules), so there are no prebuilt VICE-style libraries to link.
+# This file only selects the machine class and lets the main Makefile
+# do the rest.
+#
+
+MACHINE_CLASS = RASPI_MAC128K
+
+# Run the 68k frame loop on core 1 like the other machines.
+BMX_EMU_MULTICORE ?= 1
+
+VICELIBS :=
+
+include Makefile

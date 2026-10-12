@@ -50,7 +50,6 @@
 // RASPI includes
 #include "emux_api.h"
 #include "bmx_palette.h"
-#include "demo.h"
 #include "joy.h"
 #include "kbd.h"
 #include "menu.h"
@@ -903,13 +902,10 @@ void vsyncarch_postsync(void) {
 
   circle_check_gpio();
 
-  int reset_demo = 0;
-
   // Do key press/releases and joy latches on the main loop.
   circle_lock_acquire();
   while (pending_emu_key.head != pending_emu_key.tail) {
     int i = pending_emu_key.head & 0xf;
-    reset_demo = 1;
     if (vkbd_enabled) {
       // Kind of nice to have virtual keyboard's state
       // stay in sync with changes happening from USB
@@ -926,7 +922,6 @@ void vsyncarch_postsync(void) {
 
   while (pending_emu_joy.head != pending_emu_joy.tail) {
     int i = pending_emu_joy.head & 0x7f;
-    reset_demo = 1;
 #ifdef BMC64_DEBUG_PROFILE
     printf("joydbg: event port %d device %s(%d) type %s raw 0x%04x bits 0x%02x\n",
            pending_emu_joy.port[i],
@@ -1007,14 +1002,6 @@ void vsyncarch_postsync(void) {
   circle_lock_release();
 
   ui_handle_toggle_or_quick_func();
-
-  if (reset_demo) {
-    demo_reset_timeout();
-  }
-
-  if (raspi_demo_mode) {
-     demo_check();
-  }
 
   diagnostics_last_frame_start = frame_start;
   diagnostics_last_frame_end = circle_get_ticks();

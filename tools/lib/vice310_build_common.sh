@@ -661,6 +661,30 @@ vice310_machine_config() {
       VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-A2600-310
       VICE310_CLASS=RASPI_A2600; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
       VICE310_IMAGE_SUFFIX=a2600; VICE310_COPY_DEFAULT=0 ;;
+    mac68k)
+      # mac68k compiles directly (src/mac68k glue + vendored Basilisk II
+      # CrossPlatform/uae_cpu subset; no VICE target or arch archive).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-MAC68K-310
+      VICE310_CLASS=RASPI_MAC68K; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=mac68k; VICE310_COPY_DEFAULT=0 ;;
+    mac128k)
+      # mac128k compiles directly (src/mac128k glue + vendored Mini vMac
+      # -m 128K subset; no VICE target or arch archive).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-MAC128K-310
+      VICE310_CLASS=RASPI_MAC128K; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=mac128k; VICE310_COPY_DEFAULT=0 ;;
+    apple2)
+      # apple2 compiles directly (src/apple2 glue + vendored GSplus/KEGS
+      # subset; no VICE target or arch archive).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-APPLE2-310
+      VICE310_CLASS=RASPI_APPLE2; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=apple2; VICE310_COPY_DEFAULT=0 ;;
+    bbc)
+      # bbc compiles directly (src/bbc glue + vendored CLK BBC subset;
+      # no VICE target or arch archive).
+      VICE310_TARGET=; VICE310_MAKEFILE=mk/machines/Makefile-BBC-310
+      VICE310_CLASS=RASPI_BBC; VICE310_ARCH_DIR=; VICE310_ARCH_LIB=
+      VICE310_IMAGE_SUFFIX=bbc; VICE310_COPY_DEFAULT=0 ;;
     *) echo "unsupported VICE 3.10 machine: $machine" >&2; return 1 ;;
   esac
 }

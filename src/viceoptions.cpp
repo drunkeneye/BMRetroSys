@@ -101,7 +101,7 @@ void DecodeOptionValue(char *value) {
 ViceOptions::ViceOptions(void)
     : m_TagCommandLine(), m_pOptions(nullptr),
       m_nMachineTiming(MACHINE_TIMING_PAL_HDMI),
-      m_bDemoEnabled(false), m_bSerialEnabled(false),
+      m_bSerialEnabled(false),
       m_bGPIOOutputsEnabled(false), m_bDeveloperModeEnabled(false),
       m_developerLogBufferKB(BMX_DEVELOPER_LOG_BUFFER_DEFAULT_KB),
       m_bApiModeEnabled(false),
@@ -168,12 +168,6 @@ ViceOptions::ViceOptions(void)
       unsigned timing;
       if (bmc64::ParseMachineTiming(pValue, &timing)) {
         m_nMachineTiming = timing;
-      }
-    } else if (strcmp(pOption, "enable_demo") == 0) {
-      if (strcmp(pValue,"true") == 0 || strcmp(pValue, "1") == 0) {
-        m_bDemoEnabled = true;
-      } else {
-        m_bDemoEnabled = false;
       }
     } else if (strcmp(pOption, "enable_serial") == 0) {
       if (strcmp(pValue,"true") == 0 || strcmp(pValue, "1") == 0) {
@@ -474,8 +468,6 @@ ViceOptions::ViceOptions(void)
 ViceOptions::~ViceOptions(void) { s_pThis = 0; }
 
 unsigned ViceOptions::GetMachineTiming(void) const { return m_nMachineTiming; }
-
-bool ViceOptions::DemoEnabled(void) const { return m_bDemoEnabled; }
 
 bool ViceOptions::SerialEnabled(void) const { return m_bSerialEnabled; }
 

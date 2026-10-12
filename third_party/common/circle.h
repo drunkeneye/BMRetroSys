@@ -477,9 +477,6 @@ extern void emu_key_released_mod(long keycode, int mod);
 // Get number of virtual joysticks available in this emulator.
 extern int emu_get_num_joysticks(void);
 
-// Enable/disable demo mode for this emulator.
-extern void emu_set_demo_mode(int is_demo);
-
 // Test whether the UI is currently activated or not.
 extern int emu_is_ui_activated(void);
 

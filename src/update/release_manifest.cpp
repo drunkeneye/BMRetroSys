@@ -22,11 +22,11 @@ static_assert(kMaximumManifestPathBytes == kFatReleasePathMaximumBytes,
               "manifest and FAT release path limits must remain identical");
 static_assert(sizeof(path_policy::kSourceSha256) == 65U,
               "generated path policy must contain a SHA-256 identifier");
-static_assert(path_policy::kRequiredKernelMachineCount <= 16U,
-              "required machine inventory uses sixteen bits of flags");
+static_assert(path_policy::kRequiredKernelMachineCount <= 32U,
+              "required machine inventory uses thirty-two bits of flags");
 
-static const uint16_t kRequiredKernelMachineMask = static_cast<uint16_t>(
-    (UINT16_C(1) << path_policy::kRequiredKernelMachineCount) - 1U);
+static const uint32_t kRequiredKernelMachineMask = static_cast<uint32_t>(
+    (UINT32_C(1) << path_policy::kRequiredKernelMachineCount) - 1U);
 
 bool IsAsciiAlphaNumeric(char c) {
     return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
@@ -147,7 +147,7 @@ bool IsSafeManifestPath(const char *path) {
            FatPathValidationStatus::Ok;
 }
 
-bool ParseMachineKernelSuffix(const char *suffix, uint16_t *machine_bit) {
+bool ParseMachineKernelSuffix(const char *suffix, uint32_t *machine_bit) {
     if (suffix == 0 || suffix[0] == '\0' || strchr(suffix, '.') != 0) return false;
     const size_t machine_size = strlen(suffix);
     size_t machine_index = path_policy::kMachineKernelMachineCount;
@@ -162,14 +162,14 @@ bool ParseMachineKernelSuffix(const char *suffix, uint16_t *machine_bit) {
     if (machine_index == path_policy::kMachineKernelMachineCount) return false;
     if (machine_bit != 0) {
         *machine_bit = machine_index < path_policy::kRequiredKernelMachineCount
-            ? static_cast<uint16_t>(UINT16_C(1) << machine_index) : 0U;
+            ? static_cast<uint32_t>(UINT32_C(1) << machine_index) : 0U;
     }
     return true;
 }
 
 bool ParseMachineKernelPath(const char *path, char *common_base,
                             size_t common_base_size,
-                            uint16_t *machine_bit) {
+                            uint32_t *machine_bit) {
     if (path == 0 || common_base == 0 || common_base_size == 0U ||
         strchr(path, '/') != 0) return false;
     const char *const suffix = strrchr(path, '.');
@@ -613,7 +613,7 @@ ManifestParseStatus Parser::ParseFiles(int index, bool store,
     };
     char previous[kMaximumManifestPathBytes + 1U] = {0};
     uint64_t installed_size = 0U;
-    uint16_t required_machine_kernels = 0U;
+    uint32_t required_machine_kernels = 0U;
     char machine_kernel_base[kMaximumManifestPathBytes + 1U] = {0};
     bool required_config = false;
     bool has_tryboot = false;
@@ -671,7 +671,7 @@ ManifestParseStatus Parser::ParseFiles(int index, bool store,
         installed_size += parsed.size;
 
         if (parsed.policy == ManifestFilePolicy::Kernel) {
-            uint16_t machine_bit = 0U;
+            uint32_t machine_bit = 0U;
             if (!ParseMachineKernelPath(
                     parsed.path, machine_kernel_base,
                     sizeof(machine_kernel_base), &machine_bit)) {

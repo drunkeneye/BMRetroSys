@@ -533,3 +533,35 @@ input, DF0-ADF, Kickstart pool) live in `src/amiga/`.
 Genuine Amiga Kickstarts are proprietary: they are never vendored and are
 staged from the local pool (`roms/amiga/`: kick34005.A500, kick37175.A500,
 kick40063.A600, aros-amiga-m68k-rom.bin) to SD `/kick/` at image time only.
+
+## Basilisk II
+
+### Basilisk II (Macintosh 68k interpreter subset)
+
+| Item | Value |
+| --- | --- |
+| Role | Active emulator core for the Macintosh 68k (`RASPI_MAC68K`) machine |
+| Local path | `third_party/basilisk2` (vendored core + `bmx-shim/`) |
+| Build uses | Interpreter-only subset; BMX backend in `src/mac68k/` |
+| Upstream URL | https://github.com/macemu/macemu/tree/master/BasiliskII |
+| License | GPL-2.0 (upstream `COPYING.BASILISK2`) |
+
+Genuine Macintosh ROMs are proprietary: they are never vendored and are
+staged from the local pool (`roms/mac68k/`: `mac_rom.bin`) to SD
+`/roms/MAC68K/` at image time only.
+
+## Mini vMac
+
+### Mini vMac (Macintosh 128K -m 128K core)
+
+| Item | Value |
+| --- | --- |
+| Role | Active emulator core for the Macintosh 128K (`RASPI_MAC128K`) machine |
+| Local path | `third_party/minivmac` (vendored `src/` + generated `cfg/` + `bmx-shim/`) |
+| Build uses | `-m 128K` subset (GLOBGLUE/M68KITAB/MINEM68K/devices/PROGMAIN); BMX backend in `src/mac128k/` |
+| Upstream URL | https://github.com/egrath/minivmac |
+| License | GPL-2.0 (upstream `COPYING.txt`) |
+
+Genuine Macintosh 128K ROMs are proprietary: they are never vendored
+and are staged from the local pool (`roms/mac128k/`: `Mac128K.ROM`,
+64KB) to SD `/roms/MAC128K/` at image time only.

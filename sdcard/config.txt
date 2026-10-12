@@ -60,6 +60,25 @@ boot_delay=0
 #sdram_over_voltage=6
 #temp_limit=75
 
+# Pi5 fan curve (firmware-managed; BMX can only rewrite it, never drive it
+# at runtime -- the Fan menu maintains these lines, reboot to apply).
+# Quiet default: fan starts at 55C whisper-quiet, full tilt past 80C.
+# (Stock firmware: 50C/60C/67.5C/75C.) Keep outside the BMX MANAGED block
+# above so machine switching never wipes it.
+dtparam=cooling_fan=on
+dtparam=fan_temp0=55000
+dtparam=fan_temp0_hyst=5000
+dtparam=fan_temp0_speed=60
+dtparam=fan_temp1=65000
+dtparam=fan_temp1_hyst=5000
+dtparam=fan_temp1_speed=125
+dtparam=fan_temp2=72500
+dtparam=fan_temp2_hyst=5000
+dtparam=fan_temp2_speed=175
+dtparam=fan_temp3=80000
+dtparam=fan_temp3_hyst=5000
+dtparam=fan_temp3_speed=255
+
 # IMPORTANT: Staging and machine switching place a board-specific kernel=
 # inside the BMX-managed block above. A staged Pi4 or Pi5 card is therefore
 # intended for that board family.

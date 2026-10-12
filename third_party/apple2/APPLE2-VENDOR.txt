@@ -1,0 +1,38 @@
+Apple II core vendored from GSplus (https://github.com/digarok/gsplus,
+commit 41e7103, 2026). GPLv3, like the other vendored emulator cores.
+
+Subset: the 24 platform-independent emulation files. All platform
+drivers are deliberately EXCLUDED and replaced by src/apple2 glue:
+
+  excluded: sdl_driver.c, sdl_snd_driver.c, xdriver.c, windriver.c,
+    win32snd_driver.c, macsnd_driver.c, AppDelegate/MainView (Swift),
+    pulseaudio_driver.c, sound_driver.c (OSS fork/pipe model),
+    scc_unixdriver.c, scc_socket_driver.c, scc_windriver.c,
+    joystick_driver.c, png_write.c, CMakeLists.txt/vars/ldvars.
+
+Driver-provided symbols (implemented in src/apple2/):
+  snddrv_init/shutdown/send_sound, child_send_samples, g_preferred_rate,
+  joystick_init/update/update_buttons (+ our own joystick_callback_update),
+  scc_serial_unix_* and scc_socket_* (unconnected stubs),
+  micro_sleep/get_dtime (clock.c, __BMX__ branch -> CTimer),
+  video_set_*_mask/alpha/palette/active (called by apple2_video at boot).
+
+Local modifications to vendored files (kept minimal):
+  clock.c (__BMX__): get_dtime/micro_sleep via Circle CTimer.
+  config.c (__BMX__): cfg_guess_image_size/cfg_stat size via stdio
+    (newlib stat/lstat collide with the kernel's _stat at link).
+  defc.h/protos_base.h/protos.h/config.h/sound.h/iwm.h/defcomm.h/
+  disas.h: added missing include guards (C++ glue TUs pull them twice;
+    C++ rejects the repeated STRUCT typedefs). engine.h intentionally
+    left unguarded (multi-included code template).
+
+bmx-shim/sys/ioctl.h: the ARM newlib sysroot has no sys/ioctl.h (the core
+  never calls ioctl() on the compiled paths); minimal stub header.
+  NOTE: cfg_decompress_file() (gunzip for .gz disks) needs fork/pipe;
+  if the link demands them, stub them to fail in apple2_bmx_shim.c so
+  compressed images refuse cleanly (feed plain images instead).
+
+ROM/format notes (see also tools/download_roms.py + sdcard/apple2/ROMS.txt):
+  ROM.01 (128K) loads directly; ROM.03 (256K) is assembled from MAME
+  341-0728 + 341-0748 per upstream doc/README.ROM.files.txt; the 32K //e
+  ROM is [pad + Disk II PROM @0x600] + [CD 342-0135-b] + [EF 342-0134-a].

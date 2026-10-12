@@ -49,6 +49,17 @@ if [ -z "${IMAGE:-}" ] || [ ! -s "$IMAGE" ]; then
 fi
 cp "$IMAGE" "$SRC_DIR/pi4-test/sdcard/kernel8.img.$MACHINE"
 
+# Link map: section sizes straight from the ELF sibling (text/data/bss).
+# BSS hogs freeze boards before any log exists, so this is load-bearing:
+# compare against a known-good kernel (CPC ~13MB bss) on any big jump.
+UPPER="$(echo "$MACHINE" | tr '[:lower:]' '[:upper:]')"
+ELF="$(dirname "$IMAGE")/../bmx/machines/RASPI_${UPPER}/kernel8.elf"
+SIZE_BIN="$(ls "$SRC_DIR"/.toolchains/*/bin/*-elf-size 2>/dev/null | head -1)"
+if [ -f "$ELF" ] && [ -n "${SIZE_BIN:-}" ]; then
+  echo "build_stage_machine: link sections:"
+  "$SIZE_BIN" -B -d "$ELF" 2>/dev/null | tail -2 || true
+fi
+
 # Per-machine BUILD TAG extractors (best effort; size is authoritative).
 TAG=""
 case "$MACHINE" in
@@ -57,6 +68,12 @@ case "$MACHINE" in
     ;;
   dos)
     TAG="$(grep -o 'DOS_BUILD_TAG "[^"]*"' "$SRC_DIR/src/dos/dos_build_tag.h" 2>/dev/null | cut -d'"' -f2)"
+    ;;
+  apple2)
+    TAG="$(grep -o 'APPLE2_BUILD_TAG "[^"]*"' "$SRC_DIR/src/apple2/apple2_build_tag.h" 2>/dev/null | cut -d'"' -f2)"
+    ;;
+  bbc)
+    TAG="$(grep -o 'BBC_BUILD_TAG "[^"]*"' "$SRC_DIR/src/bbc/bbc_build_tag.h" 2>/dev/null | cut -d'"' -f2)"
     ;;
 esac
 echo "build_stage_machine: OK machine=$MACHINE size=$(stat -c%s "$SRC_DIR/pi4-test/sdcard/kernel8.img.$MACHINE") staged=pi4-test/sdcard/kernel8.img.$MACHINE${TAG:+ tag=$TAG}"

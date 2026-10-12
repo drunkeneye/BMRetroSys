@@ -726,6 +726,12 @@ int emux_atari_mount_disk(int drive, char *path) {
   return 0;
 }
 
+// DOS Drive C folder mount (common menu.c): no DOS drives here.
+int emux_dos_mount_folder(char *dir) {
+  (void)dir;
+  return -1;
+}
+
 void emux_atari_sync_drives(void) { bmx::atari800::sync_drive_items(); }
 
 static void ensure_ext(char *dst, size_t size, const char *path,

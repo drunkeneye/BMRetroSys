@@ -49,6 +49,48 @@ namespace dos {
 // settings). Real backing store lands with Phases 1-4.
 struct menu_item *s_monitor_item = nullptr;
 
+// Drive C mapping, as last requested from the menu. The guest owns the
+// truth (mounts die with a guest reboot); this is only for the status line,
+// reset to empty here and refreshed on every mount/unmount action.
+struct menu_item *s_dos_c_status = nullptr;
+char s_dos_c_mount[256] = {0};
+
+static void dos_sync_c_status(void) {
+  if (s_dos_c_status == nullptr) {
+    return;
+  }
+  if (s_dos_c_mount[0] != '\0') {
+    snprintf(s_dos_c_status->name, MAX_MENU_STR, "State: %.39s",
+             s_dos_c_mount);
+  } else {
+    snprintf(s_dos_c_status->name, MAX_MENU_STR, "State: Empty");
+  }
+}
+
+// Builds the "mount <dir> as C: + switch to it" shell script shared by
+// autostart (which appends the exe name) and the Drives menu (which stops
+// at the C: prompt). Returns false when the dir does not fit the typer.
+bool dos_mount_c_script(const char *dir, std::string *out) {
+  if (dir == nullptr || *dir == '\0' || out == nullptr) {
+    return false;
+  }
+  std::string d(dir);
+  if (d.size() + 32 > 480) {
+    return false;
+  }
+  std::string script("mount c ");
+  if (d.find(' ') != std::string::npos) {
+    script += '"';
+    script += d;
+    script += '"';
+  } else {
+    script += d;
+  }
+  script += "\nc:\n";
+  *out = script;
+  return true;
+}
+
 void sync_all_menu_items(void) {
   if (s_monitor_item != nullptr) {
     const int cur = video_get_monitor();
@@ -216,21 +258,45 @@ int emux_autostart_file(char *filename, unsigned int program_number) {
   if (base.empty() || dir.size() + base.size() + 32 > 480) {
     return -1;
   }
-  std::string script("mount c ");
-  if (dir.find(' ') != std::string::npos) {
-    script += '"';
-    script += dir;
-    script += '"';
-  } else {
-    script += dir;
+  std::string script;
+  if (!::bmx::dos::dos_mount_c_script(dir.c_str(), &script)) {
+    return -1;
   }
-  script += "\nc:\n";
   script += base;
   script += "\n";
   ::bmx::dos::dos_type_text(script.c_str());
+  snprintf(::bmx::dos::s_dos_c_mount, sizeof(::bmx::dos::s_dos_c_mount),
+           "%s", dir.c_str());
+  ::bmx::dos::dos_sync_c_status();
   ::bmx::dos::debug_log("dos autostart: queued '%s' (mount '%s' as C:)",
                             base.c_str(), dir.c_str());
   return 0;
+}
+
+// Mount a folder as C: and switch to it, without running anything.
+// Powers the Drives > Drive C menu; autostart above is mount + run.
+int emux_dos_mount_folder(char *dir) {
+  if (dir == NULL || *dir == '\0') {
+    return -1;
+  }
+  std::string script;
+  if (!::bmx::dos::dos_mount_c_script(dir, &script)) {
+    return -1;
+  }
+  ::bmx::dos::dos_type_text(script.c_str());
+  snprintf(::bmx::dos::s_dos_c_mount, sizeof(::bmx::dos::s_dos_c_mount),
+           "%s", dir);
+  ::bmx::dos::dos_sync_c_status();
+  ::bmx::dos::debug_log("dos mount: queued mount '%s' as C:", dir);
+  return 0;
+}
+
+void emux_dos_unmount_c(void) {
+  // DOSBox-X unmount spelling: "mount -u <letter>".
+  ::bmx::dos::dos_type_text("mount -u c\n");
+  ::bmx::dos::s_dos_c_mount[0] = '\0';
+  ::bmx::dos::dos_sync_c_status();
+  ::bmx::dos::debug_log("dos mount: queued unmount C:");
 }
 
 void emux_drive_change_model(int unit) {
@@ -511,9 +577,25 @@ void lib_free(void *ptr) {
 // -- settings / video / palette --------------------------------------------
 
 void emux_add_drive_option(struct menu_item *parent, int drive) {
-  // Phase 0: no drives to describe yet.
-  (void)parent;
-  (void)drive;
+  // Drive C only: folder mount as C: via typed shell keystrokes (same
+  // mechanism as autostart, minus the exe launch). The status line tracks
+  // the last mount requested from the menu; the guest owns the truth.
+  if (drive != -1) {
+    return;
+  }
+  if (parent == nullptr) {
+    return;
+  }
+  struct menu_item *folder = ui_menu_add_folder(parent, (char *)"Drive C");
+  if (folder == nullptr) {
+    return;
+  }
+  ::bmx::dos::s_dos_c_status = ui_menu_add_button(MENU_TEXT, folder,
+                                                  (char *)"State");
+  ::bmx::dos::dos_sync_c_status();
+  ui_menu_add_button(MENU_DOS_DRIVE_C_MOUNT, folder,
+                     (char *)"Mount folder as C:...");
+  ui_menu_add_button(MENU_DOS_DRIVE_C_UNMOUNT, folder, (char *)"Unmount C:");
 }
 
 void emux_add_keyboard_options(struct menu_item *parent) {
@@ -943,6 +1025,12 @@ int emux_handle_menu_change(struct menu_item *item) {
         v = item->choice_ints[v];
       }
       ::bmx::dos::video_set_monitor(v);
+      return 1;
+    }
+    case MENU_DOS_DRIVE_C_UNMOUNT: {
+      ui_info("Unmounting...");
+      emux_dos_unmount_c();
+      ui_pop_all_and_toggle();
       return 1;
     }
     case MENU_ATARI_SCREENSHOT: {

@@ -1,0 +1,18 @@
+#
+# Makefile for a BBC Micro kernel using BMX
+#
+# The CLK BBC core (vendored subset under third_party/bbc, plus the BMX
+# glue under src/bbc) is compiled directly by the main Makefile
+# (BMC64_OBJS + pattern rules), so there are no prebuilt VICE-style
+# libraries to link. This file only selects the machine class and lets the
+# main Makefile do the rest.
+#
+
+MACHINE_CLASS = RASPI_BBC
+
+# Run the BBC frame loop on core 1 like the other machines.
+BMX_EMU_MULTICORE ?= 1
+
+VICELIBS :=
+
+include Makefile

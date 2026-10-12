@@ -1,0 +1,19 @@
+#
+# Makefile for a MAC68K kernel using BMX
+#
+# The Macintosh 68k core (vendored Basilisk II under
+# third_party/basilisk2, plus the BMX hardware module under
+# src/mac68k) is compiled directly by the main Makefile (BMC64_OBJS +
+# pattern rules), so there are no prebuilt VICE-style libraries to link.
+# This file only selects the machine class and lets the main Makefile
+# do the rest.
+#
+
+MACHINE_CLASS = RASPI_MAC68K
+
+# Run the 68k frame loop on core 1 like the other machines.
+BMX_EMU_MULTICORE ?= 1
+
+VICELIBS :=
+
+include Makefile

@@ -73,6 +73,14 @@
 #include "msx/msx_emulator_core.h"
 #elif defined(RASPI_A2600)
 #include "a2600/a2600_emulator_core.h"
+#elif defined(RASPI_MAC68K)
+#include "mac68k/mac68k_emulator_core.h"
+#elif defined(RASPI_MAC128K)
+#include "mac128k/mac128k_emulator_core.h"
+#elif defined(RASPI_APPLE2)
+#include "apple2/apple2_emulator_core.h"
+#elif defined(RASPI_BBC)
+#include "bbc/bbc_emulator_core.h"
 #else
 #include "viceemulatorcore.h"
 #endif
@@ -344,6 +352,18 @@ public:
          new MSXEmulatorCore(&mMemory, circle_cycles_per_second());
 #elif defined(RASPI_A2600)
          new A2600EmulatorCore(&mMemory, circle_cycles_per_second());
+#elif defined(RASPI_MAC68K)
+         new bmx::mac68k::Mac68kEmulatorCore(&mMemory,
+                                             circle_cycles_per_second());
+#elif defined(RASPI_MAC128K)
+         new bmx::mac128k::Mac128kEmulatorCore(&mMemory,
+                                               circle_cycles_per_second());
+#elif defined(RASPI_APPLE2)
+         new bmx::apple2::Apple2EmulatorCore(&mMemory,
+                                             circle_cycles_per_second());
+#elif defined(RASPI_BBC)
+         new bmx::bbc::BbcEmulatorCore(&mMemory,
+                                             circle_cycles_per_second());
 #else
          new ViceEmulatorCore(&mMemory, circle_cycles_per_second());
 #endif

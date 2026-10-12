@@ -1,0 +1,3 @@
+# Mac 128K bootstat placeholder (no boot-time ROM files to check; the Mac
+# boots from a user-supplied 64KB 128K ROM in /roms/MAC128K with no
+# compiled-in fallback list).

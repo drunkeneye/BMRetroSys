@@ -225,6 +225,68 @@ constexpr MachineDescriptor kA2600 = {
     nullptr,
 };
 
+constexpr MachineDescriptor kMac128k = {
+    MachineId::MAC128K,
+    "Macintosh 128K",
+    "/roms/MAC128K",
+    "/systems/MAC128K/disks",
+    "/roms/MAC128K/bootstat.txt",
+    ".mac128k",
+    nullptr,
+    {25000000, 25000000, 25000000, 25000000, 25000000},
+    false,
+    false,
+    nullptr,
+    nullptr,
+};
+
+constexpr MachineDescriptor kMac68k = {
+    MachineId::MAC68K,
+    "Macintosh 68k",  // default model: Mac IIci
+    "/roms/MAC68K",
+    "/systems/MAC68K/disks",
+    "/roms/MAC68K/bootstat.txt",
+    ".mac68k",
+    nullptr,
+    {25000000, 25000000, 25000000, 25000000, 25000000},
+    false,
+    false,
+    nullptr,
+    nullptr,
+};
+
+constexpr MachineDescriptor kApple2 = {
+    MachineId::APPLE2,
+    "Apple II",  // default model: Apple IIgs (ROM 3)
+    "/roms/APPLE2",
+    "/systems/APPLE2/disks",
+    "/roms/APPLE2/bootstat.txt",
+    ".apple2",
+    nullptr,
+    // 65C02/65816 ~1.023MHz (NTSC 60Hz frame clock).
+    {1023000, 1023000, 1023000, 1023000, 1023000},
+    false,
+    false,
+    nullptr,
+    nullptr,
+};
+
+constexpr MachineDescriptor kBbc = {
+    MachineId::BBC,
+    "BBC Micro",
+    "/roms/BBC",
+    "/systems/BBC/disks",
+    "/roms/BBC/bootstat.txt",
+    ".bbc",
+    nullptr,
+    // 6502 2MHz nominal (PAL 50Hz frame clock).
+    {2000000, 2000000, 2000000, 2000000, 2000000},
+    false,
+    false,
+    nullptr,
+    nullptr,
+};
+
 }  // namespace
 
 const MachineDescriptor &CurrentMachine() {
@@ -256,6 +318,14 @@ const MachineDescriptor &CurrentMachine() {
   return kMsx;
 #elif defined(RASPI_A2600)
   return kA2600;
+#elif defined(RASPI_MAC68K)
+  return kMac68k;
+#elif defined(RASPI_MAC128K)
+  return kMac128k;
+#elif defined(RASPI_APPLE2)
+  return kApple2;
+#elif defined(RASPI_BBC)
+  return kBbc;
 #else
 #error Unknown RASPI_ variant
 #endif

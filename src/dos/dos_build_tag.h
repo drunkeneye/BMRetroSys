@@ -6,6 +6,6 @@
 #ifndef dos_build_tag_h
 #define dos_build_tag_h
 
-#define DOS_BUILD_TAG "2026-10-02 23:47:20 +0200"
+#define DOS_BUILD_TAG "2026-10-11 14:09:26 +0200"
 
 #endif

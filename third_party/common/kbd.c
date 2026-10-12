@@ -32,7 +32,6 @@
 // RASPI includes
 #include "emux_api.h"
 #include "circle.h"
-#include "demo.h"
 #include "joy.h"
 #include "menu.h"
 #include "menu_keyset.h"

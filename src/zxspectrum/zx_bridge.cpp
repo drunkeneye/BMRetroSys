@@ -262,6 +262,12 @@ int emux_atari_mount_disk(int drive, char *path) {
   return -1;
 }
 
+// DOS Drive C folder mount (common menu.c): no DOS drives here.
+int emux_dos_mount_folder(char *dir) {
+  (void)dir;
+  return -1;
+}
+
 void emux_atari_sync_drives(void) {}
 
 extern "C" int emux_atari_cart_types_for_kb(int kb, int *ids,

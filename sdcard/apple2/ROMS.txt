@@ -1,0 +1,22 @@
+Apple II system ROMs (/roms/APPLE2 on the SD card).
+
+Three models, one ROM file each (the kernel derives the machine from the
+file size, KEGS convention):
+
+  ROM.03        262144 bytes = Apple IIgs ROM 3 (default model)
+  ROM.01        131072 bytes = Apple IIgs ROM 01
+  APPLE2E.ROM    32768 bytes = Apple //e (16K useful ROM in the last 16K,
+                               Disk II PROM at offset $600)
+  diskII.prom      256 bytes = Disk II interface card P5 PROM 341-0027
+                               (handy spare; the //e carries its own copy
+                               inside APPLE2E.ROM)
+
+Missing pieces: run tools/download_roms.py --only=apple2 on the build
+host (assembles all four files out of MAME dumps on archive.org; see
+APPLE2_* in tools/download_roms.py) or copy genuine dumps with the exact
+names above into /roms/APPLE2/ by hand.
+
+Disk images live in /systems/APPLE2/disks (any extension the core sniffs:
+.dsk/.nib/.po/.2mg/.woz/.hdv). ProDOS/DOS 3.3 disks autoboot; anything
+else can be picked from the menu (Slot 6 = 5.25", Slot 5 = 3.5",
+Slot 7 = SmartPort HDD).

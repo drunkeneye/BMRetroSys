@@ -1,0 +1,21 @@
+# MAC68K ROM notes (Macintosh 68k via Basilisk II).
+#
+# The kernel boots from /roms/MAC68K/mac_rom.bin (any 32-bit-clean Mac II /
+# Quadra ROM: 64KiB-2MiB with version word $067c at file offset 8; Classic
+# $0276 ROMs also boot). mac_rom.bin is the default; the in-menu ROM
+# selector offers every .rom in this pool (one per emulated model).
+#
+# Pool contents (auto-fetched by tools/download_roms.py from the
+# archive.org "macroms" Mac_ROMs.zip collection, all $067c verified):
+#   mac_rom.bin      boot default (copy of the IIci ROM, the default model)
+#   mac_iici.rom     Mac IIci 512K (default model)
+#   mac_classic2.rom Mac Classic II 512K
+#   mac_q605.rom     Quadra/LC/Performa 605 family 1M
+#   mac_q650.rom     Quadra/Centris 610/650 1M
+#   mac_q800.rom     Quadra 800 1M (fallback source)
+#
+# Manual provisioning: drop any compatible ROM in here; the boot scan
+# prefers mac_rom.bin, else the first file with "rom" in its name.
+# There is no compiled-in fallback: without a ROM the kernel cannot boot.
+#
+# Disks live on the SD card under /systems/MAC68K/disks.

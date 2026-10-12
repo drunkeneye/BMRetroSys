@@ -1,7 +1,7 @@
-# BMRetroSys 0.3
+# BMRetroSys 0.4
 
 BMRetroSys is bare-metal emulation for the Raspberry Pi 4/5 family:
-ten 8-bit and 16-bit computers on one SD card, no Linux underneath.
+nineteen emulated machines on one SD card, no Linux underneath.
 
 This is a fork of [BMX](https://github.com/kdre/bmx) at commit
 `81efb7e` (public source export 2026.08.19). All credit for the
@@ -13,15 +13,26 @@ top of that base is mine; upstream history is preserved verbatim in
 
 
 
-| Family | Machines |
+| Machine | Core |
 | --- | --- |
-| Commodore 8-bit | C64 (fast + cycle-exact cores), SuperCPU 64, C128, VIC-20, Plus/4, PET — via VICE 3.10 |
-| Atari 8-bit | 400/800/XL/XE/5200 — via atari800 |
-| Atari 16-bit | ST/STE/Mega ST/Mega STE — via Hatari, EmuTOS built in, genuine TOS pool |
-| Sinclair | ZX Spectrum 48k/128k/+2/+2A/+3, Pentagon, Inves — via ZEsarUX, in-menu model select |
-| Amiga | A1000/A500/A500+/A1200 (OCS/ECS/AGA) — via vAmiga, DF0–DF3, HDF hard disks, snapshots |
-| PC 16-bit | 286 DOS — via DOSBox-X |
-| Atari 2600 | 2600 — via Stella, cartridges, console-switch shortcuts |
+| Commodore 64 (fast + cycle-exact cores) | VICE 3.10 |
+| SuperCPU 64 | VICE 3.10 |
+| Commodore 128 | VICE 3.10 |
+| VIC-20 | VICE 3.10 |
+| Plus/4 | VICE 3.10 |
+| PET | VICE 3.10 |
+| Atari 400/800/XL/XE/5200 | atari800 |
+| Atari ST/STE/Mega ST/Mega STE (EmuTOS built in, genuine TOS pool) | Hatari |
+| ZX Spectrum 48k/128k/+2/+2A/+3, Pentagon, Inves (in-menu model select) | ZEsarUX |
+| Amstrad CPC (in-menu model select) | ZEsarUX |
+| MSX | ZEsarUX |
+| Amiga A1000/A500/A500+/A1200 (OCS/ECS/AGA, DF0–DF3, HDF, snapshots) | vAmiga |
+| PC 286 DOS | DOSBox-X |
+| Atari 2600 (cartridges, console-switch shortcuts) | Stella |
+| Macintosh 128K | Mini vMac |
+| Mac IIci/Quadra | Basilisk II |
+| Apple II: IIgs (ROM 3/ROM 01) + //e (in-menu model select) | GSplus/KEGS |
+| BBC Micro Model B: DFS/ADFS/cassette (in-menu model select) | CLK |
 
 
 ## AI all over the place
@@ -29,8 +40,15 @@ top of that base is mine; upstream history is preserved verbatim in
 > Built with AI assistance: vibe-coded with Muse Spark 1.3 via
 > [opencode.ai](https://opencode.ai). This is not a fully supported
 > release, it is unclear whether any reported bugs will ever be
-> fixed. And there a lot of bugs, AI is real human here, e.g.,
-> MSX sound is scrambled. 
+> fixed. 
+
+
+## BUGS
+
+And there a lot of bugs, AI is real human here, e.g., MSX sound is scrambled,
+BBC does not really loads disks and screen flickers sometimes. 
+I will not use these kernels often, so for now these will be kept buggy,
+until someone creates an issue, then we will see, what the AI can do to fix.
 
 
 ## SD-card layout
@@ -53,6 +71,15 @@ roms/AMIGA, roms/ATARIST, ...                   ... firmware pools (TOS/Kick liv
 flat under `roms/`. Case is significant on paper, irrelevant on the
 FAT32 card.)
 
+
+## What changed (0.4)
+
+- New machines: Apple II (GSplus/KEGS: IIgs ROM 3/ROM 01 + //e,
+  Slot 6/5/7 disks, monitor options, screenshots, PR#6 autostart),
+  Macintosh 128K (Mini vMac), Mac IIci/Quadra (Basilisk II),
+  BBC Micro Model B DFS/ADFS/cassette (CLK: 2×1770 DFS drives,
+  SHIFT+BREAK autostart, Pi5 fan curve menu).
+- Full list: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## What changed (0.3)
 
@@ -146,6 +173,8 @@ it into the disks folders, just that you have some cool stuff to start with.
 - vAmiga (MPL-2.0) by Dirk W. Hoffmann; DiagROM for the no-Kickstart
   fallback.
 - DOSBox-X for the DOS machine.
+- GSplus/KEGS (GPL-3.0) by Kent Dickey for the Apple II machine.
+- CLK (MIT) by Tom Harte for the BBC Micro machine.
 - Atari firmware pool: [FW-Altirra](https://github.com/ascrnet/FW-Altirra).
 - Commodore firmware: [zimmers.net](https://www.zimmers.net/anonftp/pub/cbm/firmware/).
 - Amiga Kickstarts + Atari TOS images: [archive.org](https://archive.org)

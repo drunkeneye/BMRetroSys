@@ -47,7 +47,6 @@
 #include "menu_timing.h"
 #include "ui.h"
 #include "keyboard.h"
-#include "demo.h"
 #include "datasette.h"
 #include "resources.h"
 #include "sound.h"
@@ -839,7 +838,6 @@ void emux_trap_main_loop(void (*trap_func)(uint16_t, void *data), void* data) {
 }
 
 void emux_kbd_set_latch_keyarr(int row, int col, int value) {
-  demo_reset_timeout();
   keyboard_set_keyarr(row, col, value);
 }
 
@@ -3255,6 +3253,12 @@ void circle_set_userport(uint8_t value) {
 int emux_atari_mount_disk(int drive, char *path) {
   (void)drive;
   (void)path;
+  return -1;
+}
+
+// DOS Drive C folder mount (common menu.c): no DOS drives here.
+int emux_dos_mount_folder(char *dir) {
+  (void)dir;
   return -1;
 }
 

@@ -40,7 +40,6 @@
 // RASPI Includes
 #include "emux_api.h"
 #include "crt_preset.h"
-#include "demo.h"
 #include "joy.h"
 #include "kbd.h"
 #include "keymap_editor.h"
@@ -139,6 +138,10 @@ typedef enum {
   MACHINE_EMULATOR_CPC,
   MACHINE_EMULATOR_MSX,
   MACHINE_EMULATOR_A2600,
+  MACHINE_EMULATOR_MAC68K,
+  MACHINE_EMULATOR_MAC128K,
+  MACHINE_EMULATOR_APPLE2,
+  MACHINE_EMULATOR_BBC,
   MACHINE_EMULATOR_UNKNOWN,
 } MachineEmulator;
 
@@ -195,6 +198,8 @@ static void refresh_overclock_diagnostics(void);
 static int menu_file_item_to_dir_index(struct menu_item *item);
 static int show_text_file_if_supported(struct menu_item *item);
 static void quick_access_refresh_slot_items(void);
+static int file_browser_key_pressed(struct menu_item *root,
+                                    struct menu_item *current, long key);
 
 // For filename filters
 typedef enum {
@@ -690,6 +695,8 @@ static char atari_uncompr_output[FILENAME_MAX];
 
 int emux_atari_mount_disk(int drive, char *path);
 void emux_atari_sync_drives(void);
+// DOS Drive C folder mount (dos_bridge.cpp; stubbed negative elsewhere).
+int emux_dos_mount_folder(char *dir);
 int emux_atari_blank_cart(char *path);
 int emux_atari_blank_cart(char *path);
 int emux_atari_save_set(char *path);
@@ -1288,6 +1295,7 @@ static struct menu_item *show_files(DirType dir_type, FileFilter filter,
 
   file_root->cursor_listener_func = files_cursor_listener;
   file_root->left_right_listener_func = files_left_right_listener;
+  file_root->key_listener_func = file_browser_key_pressed;
 
   if (has_name_field) {
     struct menu_item *file_name_item = ui_menu_add_text_field(
@@ -1379,6 +1387,18 @@ static void show_about() {
       case BMC64_MACHINE_CLASS_A2600:
         kname = "kernel8.img.a2600";
         break;
+      case BMC64_MACHINE_CLASS_MAC68K:
+        kname = "kernel8.img.mac68k";
+        break;
+      case BMC64_MACHINE_CLASS_MAC128K:
+        kname = "kernel8.img.mac128k";
+        break;
+      case BMC64_MACHINE_CLASS_APPLE2:
+        kname = "kernel8.img.apple2";
+        break;
+      case BMC64_MACHINE_CLASS_BBC:
+        kname = "kernel8.img.bbc";
+        break;
       default:
         break;
       }
@@ -1457,6 +1477,18 @@ static void show_about() {
     break;
   case BMC64_MACHINE_CLASS_A2600:
     strncpy (desc, "A Bare Metal Atari 2600 Emulator", sizeof(desc));
+    break;
+  case BMC64_MACHINE_CLASS_MAC68K:
+    strncpy (desc, "A Bare Metal Macintosh 68k Emulator", sizeof(desc));
+    break;
+  case BMC64_MACHINE_CLASS_MAC128K:
+    strncpy (desc, "A Bare Metal Macintosh 128K Emulator", sizeof(desc));
+    break;
+  case BMC64_MACHINE_CLASS_APPLE2:
+    strncpy (desc, "A Bare Metal Apple II Emulator", sizeof(desc));
+    break;
+  case BMC64_MACHINE_CLASS_BBC:
+    strncpy (desc, "A Bare Metal BBC Micro Emulator", sizeof(desc));
     break;
   default:
     strncpy (title, "ERROR", 15);
@@ -4541,7 +4573,10 @@ static void ui_set_hotkeys() {
       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
       emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
       emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
-      emux_machine_class == BMC64_MACHINE_CLASS_A2600) {
+      emux_machine_class == BMC64_MACHINE_CLASS_A2600 ||
+      emux_machine_class == BMC64_MACHINE_CLASS_MAC68K ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_MAC128K ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_APPLE2 || emux_machine_class == BMC64_MACHINE_CLASS_BBC) {
     return;
   }
 
@@ -4903,6 +4938,14 @@ static const char *settings_base_name(void) {
     return "settings-msx.txt";
   case BMC64_MACHINE_CLASS_A2600:
     return "settings-a2600.txt";
+  case BMC64_MACHINE_CLASS_MAC68K:
+    return "settings-mac68k.txt";
+  case BMC64_MACHINE_CLASS_MAC128K:
+    return "settings-mac128k.txt";
+  case BMC64_MACHINE_CLASS_APPLE2:
+    return "settings-apple2.txt";
+  case BMC64_MACHINE_CLASS_BBC:
+    return "settings-bbc.txt";
   default:
     return NULL;
   }
@@ -4990,7 +5033,10 @@ static int save_settings() {
       emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
       emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
       emux_machine_class != BMC64_MACHINE_CLASS_MSX &&
-      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC68K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC128K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_APPLE2 && emux_machine_class != BMC64_MACHINE_CLASS_BBC) {
   fprintf(fp, "hotkey_cf1=%d\n", hotkey_cf1_item->value);
   fprintf(fp, "hotkey_cf3=%d\n", hotkey_cf3_item->value);
   fprintf(fp, "hotkey_cf5=%d\n", hotkey_cf5_item->value);
@@ -6576,6 +6622,22 @@ static void select_file(struct menu_item *item) {
     return;
   }
 
+  if (item->sub_id == MENU_SUB_PICK_DIR &&
+      item->id == MENU_DOS_MOUNT_DIR_FILE) {
+    // Drives > Drive C > folder picker: "(Use this dir)" mounts the
+    // current folder as C: and lands at the C: prompt (no autorun).
+    char dir[256];
+    snprintf(dir, sizeof dir, "%s", fullpath(DIR_ROOT, ""));
+    ui_info("Mounting...");
+    if (emux_dos_mount_folder(dir) < 0) {
+      ui_pop_menu();
+      ui_error("Failed to mount folder");
+    } else {
+      ui_pop_all_and_toggle();
+    }
+    return;
+  }
+
   switch (item->id) {
      case MENU_IEC_DIR:
        emux_set_iec_dir(unit, fullpath(DIR_IEC, ""));
@@ -7028,6 +7090,8 @@ static int menu_file_item_to_dir_index(struct menu_item *item) {
     return DIR_ROOT;
   case MENU_AUTOSTART_FILE:
     return DIR_ROOT;
+  case MENU_DOS_MOUNT_DIR_FILE:
+    return DIR_ROOT;
   case MENU_AMIGA_HDF0_FILE:
   case MENU_AMIGA_HDF1_FILE:
     return DIR_DISKS;
@@ -7230,7 +7294,10 @@ static struct menu_item *relist_files_after_dir_change(int menu_id) {
                                   BMC64_MACHINE_CLASS_ZXSPECTRUM ||
                               emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
                               emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
-                              emux_machine_class == BMC64_MACHINE_CLASS_A2600
+                              emux_machine_class == BMC64_MACHINE_CLASS_A2600 ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_MAC68K ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_MAC128K ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_APPLE2 || emux_machine_class == BMC64_MACHINE_CLASS_BBC
                           ? FILTER_NONE
                           : FILTER_TAPE,
                       menu_id, 1);
@@ -7289,6 +7356,8 @@ static struct menu_item *relist_files_after_dir_change(int menu_id) {
     return show_files(DIR_DRIVE_ROMS, FILTER_NONE, menu_id, 1);
   case MENU_AUTOSTART_FILE:
     return show_files(DIR_ROOT, FILTER_NONE, menu_id, 1);
+  case MENU_DOS_MOUNT_DIR_FILE:
+    return show_files(DIR_ROOT, FILTER_DIRS, menu_id, 1);
   case MENU_AMIGA_HDF0_FILE:
   case MENU_AMIGA_HDF1_FILE:
     return show_files(DIR_DISKS, FILTER_NONE, menu_id, 1);
@@ -7372,6 +7441,71 @@ static void enter_dir(struct menu_item *item) {
   strcpy(current_dir_names[dir_index], next_dir);
   ui_pop_menu();
   relist_files_after_dir_change(menu_id);
+}
+
+// Pending delete target for the confirm dialog. The file browser lives in
+// this file for every kernel (shared libbmc64common), so one implementation
+// covers all machines. Only real-filesystem picks (MENU_SUB_PICK_FILE) can
+// be deleted; archive interiors (PICK_ZIPFILE/ENTER_ZIPDIR) never reach here
+// because zip levels have no key listener.
+static char delete_pending_abs[256];
+static int delete_pending_menu_id = -1;
+
+static void delete_file_request(struct menu_item *root,
+                                struct menu_item *current) {
+  int dir_index;
+  char abs[sizeof delete_pending_abs];
+  char message[320];
+
+  if (root == NULL || current == NULL) return;
+  dir_index = menu_file_item_to_dir_index(current);
+  if (dir_index < 0 || dir_index >= NUM_DIR_TYPES) return;
+  if (build_path(abs, sizeof abs, current_volume_names[dir_index],
+                 current_dir_names[dir_index],
+                 current->str_value) != 0) {
+    ui_error("Path too long");
+    return;
+  }
+  snprintf(delete_pending_abs, sizeof delete_pending_abs, "%s", abs);
+  delete_pending_menu_id = current->id;
+  snprintf(message, sizeof message, "Delete '%s'?",
+           current->str_value);
+  ui_confirm_wrapped_cancel_default("Delete file?", message, 0,
+                                    MENU_CONFIRM_DELETE_FILE);
+}
+
+static int file_browser_key_pressed(struct menu_item *root,
+                                    struct menu_item *current, long key) {
+  if (key != KEYCODE_Delete) return 0;
+  if (root == NULL || current == NULL) return 0;
+  // Text entry rows own Delete/Backspace for editing; never delete files
+  // from there. Backspace is deliberately left alone everywhere.
+  if (current->type == TEXTFIELD) return 0;
+  if (current->type != BUTTON) return 0;
+  if (current->sub_id != MENU_SUB_PICK_FILE) return 0;
+  if (current->str_value[0] == '\0') return 0;
+  delete_file_request(root, current);
+  return 1;
+}
+
+static void delete_file_confirmed(void) {
+  int menu_id;
+  char abs[sizeof delete_pending_abs];
+
+  if (delete_pending_abs[0] == '\0' || delete_pending_menu_id < 0) return;
+  snprintf(abs, sizeof abs, "%s", delete_pending_abs);
+  menu_id = delete_pending_menu_id;
+  delete_pending_abs[0] = '\0';
+  delete_pending_menu_id = -1;
+  if (remove(abs) != 0) {
+    ui_error("Delete failed");
+    return;
+  }
+  // Refresh the listing in place: drop the stale browser and show it fresh
+  // so the deleted row disappears on every kernel.
+  ui_pop_menu();
+  relist_files_after_dir_change(menu_id);
+  ui_info("Deleted");
 }
 
 static int files_left_right_listener(struct menu_item* parent,
@@ -8513,9 +8647,12 @@ static void menu_value_changed(struct menu_item *item) {
                        emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
                        emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM ||
                        emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
-                       emux_machine_class == BMC64_MACHINE_CLASS_A2600
-                   ? FILTER_NONE
-                   : FILTER_DISK,
+                       emux_machine_class == BMC64_MACHINE_CLASS_A2600 ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_MAC68K ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_MAC128K ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_APPLE2 || emux_machine_class == BMC64_MACHINE_CLASS_BBC
+                    ? FILTER_NONE
+                    : FILTER_DISK,
                MENU_DISK_FILE, 0);
     return;
   case MENU_AMIGA_HDF0:
@@ -8547,6 +8684,11 @@ static void menu_value_changed(struct menu_item *item) {
   case MENU_ATARI_UNCOMPRESS:
     show_files(DIR_DISKS, FILTER_ATARI_DISK, MENU_ATARI_UNCOMPRESS_FILE, 1);
     return;
+  case MENU_DOS_DRIVE_C_MOUNT:
+    // Folder picker for Drive C: directories only, "(Use this dir)"
+    // mounts the current folder. Autostart (file picks) is untouched.
+    show_files(DIR_ROOT, FILTER_DIRS, MENU_DOS_MOUNT_DIR_FILE, 1);
+    return;
   case MENU_DRIVE_CHANGE_ROM_1541:
     show_files(DIR_DRIVE_ROMS, FILTER_NONE, MENU_DRIVE_ROM_FILE_1541, 0);
     return;
@@ -8576,9 +8718,12 @@ static void menu_value_changed(struct menu_item *item) {
                        emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM ||
                        emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
                        emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
-                       emux_machine_class == BMC64_MACHINE_CLASS_A2600
-                   ? FILTER_NONE
-                   : FILTER_TAPE,
+                       emux_machine_class == BMC64_MACHINE_CLASS_A2600 ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_MAC68K ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_MAC128K ||
+                       emux_machine_class == BMC64_MACHINE_CLASS_APPLE2 || emux_machine_class == BMC64_MACHINE_CLASS_BBC
+                    ? FILTER_NONE
+                    : FILTER_TAPE,
                MENU_TAPE_FILE, 0);
     return;
   case MENU_ATARI_ATTACH_CART:
@@ -8831,10 +8976,6 @@ static void menu_value_changed(struct menu_item *item) {
     return;
   case MENU_WARP_MODE:
     toggle_warp(item->value);
-    return;
-  case MENU_DEMO_MODE:
-    raspi_demo_mode = item->value;
-    demo_reset();
     return;
   case MENU_SYSTEM_DEVELOPER_STATUS:
   case MENU_SYSTEM_DEVELOPER_PASSWORD:
@@ -9267,12 +9408,18 @@ static void menu_value_changed(struct menu_item *item) {
       perform_system_action(SYSTEM_ACTION_REBOOT);
     } else if (confirm_sub_id == MENU_CONFIRM_SYSTEM_POWER_OFF) {
       perform_system_action(SYSTEM_ACTION_POWER_OFF);
+    } else if (confirm_sub_id == MENU_CONFIRM_DELETE_FILE) {
+      delete_file_confirmed();
     } else {
       menu_update_confirm_ok(confirm_sub_id);
     }
     break;
   }
   case MENU_CONFIRM_CANCEL: {
+    if (item->sub_id == MENU_CONFIRM_DELETE_FILE) {
+      delete_pending_abs[0] = '\0';
+      delete_pending_menu_id = -1;
+    }
     if (item->sub_id == MENU_CONFIRM_UPDATE_TEST_CHANNEL ||
         item->sub_id == MENU_CONFIRM_UPDATE_DRAFT_AUTH ||
         item->sub_id == MENU_CONFIRM_UPDATE_INSTALL ||
@@ -9608,6 +9755,14 @@ static BMC64MachineClass machine_emulator_class(MachineEmulator emulator) {
       return BMC64_MACHINE_CLASS_MSX;
     case MACHINE_EMULATOR_A2600:
       return BMC64_MACHINE_CLASS_A2600;
+    case MACHINE_EMULATOR_MAC68K:
+      return BMC64_MACHINE_CLASS_MAC68K;
+    case MACHINE_EMULATOR_MAC128K:
+      return BMC64_MACHINE_CLASS_MAC128K;
+    case MACHINE_EMULATOR_APPLE2:
+      return BMC64_MACHINE_CLASS_APPLE2;
+    case MACHINE_EMULATOR_BBC:
+      return BMC64_MACHINE_CLASS_BBC;
     default:
       return BMC64_MACHINE_CLASS_UNKNOWN;
   }
@@ -9641,6 +9796,10 @@ static const char *machine_emulator_name(MachineEmulator emulator) {
     case MACHINE_EMULATOR_CPC: return "Amstrad CPC";
     case MACHINE_EMULATOR_MSX: return "MSX";
     case MACHINE_EMULATOR_A2600: return "Atari 2600";
+    case MACHINE_EMULATOR_MAC68K: return "Macintosh 68k";
+    case MACHINE_EMULATOR_MAC128K: return "Macintosh 128K";
+    case MACHINE_EMULATOR_APPLE2: return "Apple II";
+    case MACHINE_EMULATOR_BBC: return "BBC Micro";
     default: return "Unknown";
   }
 }
@@ -9665,6 +9824,10 @@ static MachineEmulator current_machine_emulator(void) {
     case BMC64_MACHINE_CLASS_CPC: return MACHINE_EMULATOR_CPC;
     case BMC64_MACHINE_CLASS_MSX: return MACHINE_EMULATOR_MSX;
     case BMC64_MACHINE_CLASS_A2600: return MACHINE_EMULATOR_A2600;
+    case BMC64_MACHINE_CLASS_MAC68K: return MACHINE_EMULATOR_MAC68K;
+    case BMC64_MACHINE_CLASS_MAC128K: return MACHINE_EMULATOR_MAC128K;
+    case BMC64_MACHINE_CLASS_APPLE2: return MACHINE_EMULATOR_APPLE2;
+    case BMC64_MACHINE_CLASS_BBC: return MACHINE_EMULATOR_BBC;
     default: return MACHINE_EMULATOR_UNKNOWN;
   }
 }
@@ -9757,6 +9920,10 @@ static void machine_populate_emulators(MachineEmulator preferred) {
       MACHINE_EMULATOR_CPC,
       MACHINE_EMULATOR_MSX,
       MACHINE_EMULATOR_A2600,
+      MACHINE_EMULATOR_MAC68K,
+      MACHINE_EMULATOR_MAC128K,
+      MACHINE_EMULATOR_APPLE2,
+      MACHINE_EMULATOR_BBC,
   };
   int i;
 
@@ -10597,6 +10764,22 @@ void build_menu(struct menu_item *root) {
     strcat(machine_info_txt,"Atari 2600 ");
     strcpy(machine_sub_dir, "/systems/A2600");
     break;
+  case BMC64_MACHINE_CLASS_MAC68K:
+    strcat(machine_info_txt,"Macintosh 68k ");
+    strcpy(machine_sub_dir, "/systems/MAC68K");
+    break;
+  case BMC64_MACHINE_CLASS_MAC128K:
+    strcat(machine_info_txt,"Macintosh 128K ");
+    strcpy(machine_sub_dir, "/systems/MAC128K");
+    break;
+  case BMC64_MACHINE_CLASS_APPLE2:
+    strcat(machine_info_txt,"Apple II ");
+    strcpy(machine_sub_dir, "/systems/APPLE2");
+    break;
+  case BMC64_MACHINE_CLASS_BBC:
+    strcat(machine_info_txt,"BBC Micro ");
+    strcpy(machine_sub_dir, "/systems/BBC");
+    break;
   default:
     strcat(machine_info_txt,"??? ");
     strcpy(machine_sub_dir, "/");
@@ -10700,7 +10883,9 @@ void build_menu(struct menu_item *root) {
           emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
           emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
           emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
-          emux_machine_class == BMC64_MACHINE_CLASS_A2600) ?
+          emux_machine_class == BMC64_MACHINE_CLASS_A2600 ||
+          emux_machine_class == BMC64_MACHINE_CLASS_MAC68K ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_MAC128K) ?
          "Autostart..." : "Autostart Prg/Disk...");
      emux_get_int(Setting_AutostartWarp, &tmp);
      ui_menu_add_toggle(MENU_AUTOSTART_WARP, root, "Autostart Warp", tmp);
@@ -10721,7 +10906,10 @@ void build_menu(struct menu_item *root) {
       emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
       emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
       emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
-      emux_machine_class == BMC64_MACHINE_CLASS_A2600) {
+      emux_machine_class == BMC64_MACHINE_CLASS_A2600 ||
+      emux_machine_class == BMC64_MACHINE_CLASS_MAC68K ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_MAC128K ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_APPLE2 || emux_machine_class == BMC64_MACHINE_CLASS_BBC) {
     // Atari SIO drives D1:-D8: plus disk-set/rotate/blank management are
     // built by the bridge (emux_add_drive_option with drive -1 above);
     // the VICE drive model/IEC/default-disk UI does not apply.
@@ -10732,6 +10920,8 @@ void build_menu(struct menu_item *root) {
     // CPC is also a non-VICE core: bridge-built A/B floppies only.
     // MSX is also a non-VICE core: bridge-built cartridge only.
     // A2600 is also a non-VICE core: bridge-built cartridge only.
+    // MAC68K is also a non-VICE core: bridge-built disk only.
+    // MAC128K is also a non-VICE core: bridge-built floppies only.
   } else {
     build_drive_menu(drive_parent, &drive_menu_specs[0]);
 
@@ -10753,7 +10943,10 @@ void build_menu(struct menu_item *root) {
       emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
       emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
       emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
-      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC68K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC128K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_APPLE2 && emux_machine_class != BMC64_MACHINE_CLASS_BBC) {
     ui_menu_add_button(MENU_DRIVE_CHANGE_ROM, drive_parent, "Change ROM...");
   }
 
@@ -10764,7 +10957,10 @@ void build_menu(struct menu_item *root) {
       emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
       emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
       emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
-      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC68K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC128K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_APPLE2 && emux_machine_class != BMC64_MACHINE_CLASS_BBC) {
     parent = ui_menu_add_folder(drive_parent, "Create empty Disk");
       ui_menu_add_button(MENU_CREATE_D64, parent, "D64...");
       ui_menu_add_button(MENU_CREATE_D67, parent, "D67...");
@@ -10793,12 +10989,15 @@ void build_menu(struct menu_item *root) {
 
   parent = emux_add_cartridge_options(root);
 
-  // No cassette interface on a PC, an Amiga, an Atari ST or a 2600;
-  // every other machine keeps its Tape menu.
+  // No cassette interface on a PC, an Amiga, an Atari ST, a 2600,
+  // a Mac or an Apple II; every other machine keeps its Tape menu.
   if (emux_machine_class != BMC64_MACHINE_CLASS_DOS &&
       emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
       emux_machine_class != BMC64_MACHINE_CLASS_ATARIST &&
-      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC68K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC128K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_APPLE2 && emux_machine_class != BMC64_MACHINE_CLASS_BBC) {
   parent = ui_menu_add_folder(root, "Tape");
 
     ui_menu_add_button(MENU_ATTACH_TAPE, parent, "Attach tape image...");
@@ -11332,7 +11531,10 @@ void build_menu(struct menu_item *root) {
        emux_machine_class == BMC64_MACHINE_CLASS_AMIGA ||
        emux_machine_class == BMC64_MACHINE_CLASS_ZXSPECTRUM || emux_machine_class == BMC64_MACHINE_CLASS_CPC ||
        emux_machine_class == BMC64_MACHINE_CLASS_MSX ||
-       emux_machine_class == BMC64_MACHINE_CLASS_A2600) {
+       emux_machine_class == BMC64_MACHINE_CLASS_A2600 ||
+       emux_machine_class == BMC64_MACHINE_CLASS_MAC68K ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_MAC128K ||
+                              emux_machine_class == BMC64_MACHINE_CLASS_APPLE2 || emux_machine_class == BMC64_MACHINE_CLASS_BBC) {
       ui_menu_add_button(MENU_ATARI_SCREENSHOT, video_parent,
                       "Save screenshot (.bmp)");
    }
@@ -11369,7 +11571,10 @@ void build_menu(struct menu_item *root) {
       emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
       emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
       emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
-      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC68K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC128K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_APPLE2 && emux_machine_class != BMC64_MACHINE_CLASS_BBC) {
     sound_sid_parent = ui_menu_add_folder(sound_parent, "SID");
   }
 
@@ -11401,7 +11606,10 @@ void build_menu(struct menu_item *root) {
       emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
       emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
       emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
-      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC68K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC128K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_APPLE2 && emux_machine_class != BMC64_MACHINE_CLASS_BBC) {
     ui_menu_add_button(MENU_KEYBOARD_EDITOR, parent,
                        "Mapping Editor...");
   }
@@ -11419,7 +11627,10 @@ void build_menu(struct menu_item *root) {
       emux_machine_class != BMC64_MACHINE_CLASS_AMIGA &&
       emux_machine_class != BMC64_MACHINE_CLASS_ZXSPECTRUM &&
       emux_machine_class != BMC64_MACHINE_CLASS_CPC &&
-      emux_machine_class != BMC64_MACHINE_CLASS_A2600) {
+      emux_machine_class != BMC64_MACHINE_CLASS_A2600 &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC68K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_MAC128K &&
+      emux_machine_class != BMC64_MACHINE_CLASS_APPLE2 && emux_machine_class != BMC64_MACHINE_CLASS_BBC) {
   child = hotkey_cf1_item =
       ui_menu_add_multiple_choice(MENU_HOTKEY_CF1, parent, "C= + F1 Hotkey");
   child->value = HOTKEY_CHOICE_NONE;
@@ -11670,12 +11881,6 @@ void build_menu(struct menu_item *root) {
                                           "Confirm Reset from Emulator", 1);
 
   warp_item = ui_menu_add_toggle(MENU_WARP_MODE, root, "Warp Mode", 0);
-
-  // This is an undocumented feature for now. Keep invisible unless it
-  // is activated by cmdline.txt
-  if (raspi_demo_mode) {
-    ui_menu_add_toggle(MENU_DEMO_MODE, root, "Demo Mode", raspi_demo_mode);
-  }
 
   parent = ui_menu_add_folder(root, "Reset");
   ui_menu_add_button(MENU_SOFT_RESET, parent, "Soft Reset");

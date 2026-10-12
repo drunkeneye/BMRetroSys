@@ -1,0 +1,185 @@
+//
+//  LinearFilter.c
+//  Clock Signal
+//
+//  Created by Thomas Harte on 01/10/2011.
+//  Copyright 2011 Thomas Harte. All rights reserved.
+//
+
+#include "FIRFilter.hpp"
+
+#include <cmath>
+#include <numbers>
+#include <numeric>
+
+using namespace SignalProcessing;
+
+// MARK: - Kaiser Bessel.
+
+/*
+
+	A Kaiser-Bessel filter is a real time window filter. It looks at the last n samples
+	of an incoming data source and computes a filtered value, which is the value you'd
+	get after applying the specified filter, at the centre of the sampling window.
+
+	Hence, if you request a 37 tap filter then filtering introduces a latency of 18
+	samples. Suppose you're receiving input at 44,100Hz and using 4097 taps, then you'll
+	introduce a latency of 2048 samples, which is about 46ms.
+
+	There's a correlation between the number of taps and the quality of the filtering.
+	More samples = better filtering, at the cost of greater latency. Internally, applying
+	the filter involves calculating a weighted sum of previous values, so increasing the
+	number of taps is quite cheap in processing terms.
+
+	Original source for this filter:
+
+		"DIGITAL SIGNAL PROCESSING, II", IEEE Press, pages 123-126.
+*/
+
+namespace {
+
+/*! Evaluates the 0th order Bessel function at @c a. */
+constexpr float ino(const float a) {
+	float d = 0.0f;
+	float ds = 1.0f;
+	float s = 1.0f;
+
+	do {
+		d += 2.0f;
+		ds *= (a * a) / (d * d);
+		s += ds;
+	} while(ds > s*1e-6f);
+
+	return s;
+}
+
+std::vector<float> coefficients_for_idealised_filter_response(
+	const std::vector<float> &A,
+	const float attenuation,
+	const std::size_t number_of_taps
+) {
+	/* Calculate alpha, the Kaiser-Bessel window shape factor */
+	const float a =	[&] {
+		if(attenuation < 21.0f) {
+			return 0.0f;
+		} else if(attenuation > 50.0f) {
+			return 0.1102f * (attenuation - 8.7f);
+		} else {
+			return 0.5842f * powf(attenuation - 21.0f, 0.4f) + 0.7886f * (attenuation - 21.0f);
+		}
+	} ();
+
+	std::vector<float> filter_coefficients(number_of_taps);
+
+	/* Work out the right hand side of the filter coefficients. */
+	const float I0 = ino(a);
+	const std::size_t Np = (number_of_taps - 1) / 2;
+	const float Np_squared = float(Np * Np);
+	for(std::size_t i = 0; i <= Np; ++i) {
+		filter_coefficients[Np + i] =
+				A[i] *
+				ino(a * sqrtf(1.0f - (float(i * i) / Np_squared) )) /
+				I0;
+	}
+
+	/* Coefficients are symmetrical, so copy from right hand side to left. */
+	for(std::size_t i = 0; i < Np; ++i) {
+		filter_coefficients[i] = filter_coefficients[number_of_taps - 1 - i];
+	}
+
+	/* Scale back up to retain 100% of input volume. */
+	const float total = std::accumulate(filter_coefficients.begin(), filter_coefficients.end(), 0.0f);
+	const float multiplier = 1.0f / total;
+	for(float &coefficient: filter_coefficients) {
+		coefficient *= multiplier;
+	}
+	return filter_coefficients;
+}
+}
+
+template <ScalarType type>
+FIRFilter<type> KaiserBessel::filter(
+	size_t number_of_taps,
+	const float input_sample_rate,
+	const float low_frequency,
+	float high_frequency,
+	float attenuation
+) {
+	// Ensure an odd number of taps greater than or equal to 3, with a minimum attenuation of 21.
+	number_of_taps = std::max<size_t>(3, number_of_taps) | 1;
+	attenuation = std::max(attenuation, 21.0f);
+
+	/* calculate idealised filter response */
+	const std::size_t Np = (number_of_taps - 1) / 2;
+	const float two_over_sample_rate = 2.0f / input_sample_rate;
+
+	// Clamp the high cutoff frequency.
+	high_frequency = std::min(high_frequency, input_sample_rate * 0.5f);
+
+	std::vector<float> A(Np+1);
+	A[0] = 2.0f * (high_frequency - low_frequency) / input_sample_rate;
+	for(unsigned int i = 1; i <= Np; ++i) {
+		const float i_pi = float(i) * std::numbers::pi_v<float>;
+		A[i] =
+			(
+				sinf(two_over_sample_rate * i_pi * high_frequency) -
+				sinf(two_over_sample_rate * i_pi * low_frequency)
+			) / i_pi;
+	}
+
+	const auto idealised = coefficients_for_idealised_filter_response(A, attenuation, number_of_taps);
+	return FIRFilter<type>(
+		idealised.begin(),
+		idealised.end()
+	);
+}
+
+// MARK: - Box.
+
+template <ScalarType type>
+FIRFilter<type> Box::filter(
+	const float units_per_sample,
+	const float total_range
+) {
+	const auto filter_size = size_t(std::ceil(total_range / units_per_sample)) | 1;
+	const auto midpoint = filter_size / 2;
+	std::vector<float> coefficients(filter_size);
+
+	const float cutoff = total_range / 2.0f;
+	float total = 0.0f;
+	float distance = 0.0f;
+	for(size_t c = 0; midpoint + c < filter_size; ++c) {
+		const float coefficient = [&]{
+			const auto far = distance + 0.5f * units_per_sample;
+			if(far < cutoff) return 1.0f;
+
+			const auto near = distance - 0.5f * units_per_sample;
+			if(near >= cutoff) return 0.0f;
+
+			return (cutoff - near) / units_per_sample;
+		} ();
+		distance += units_per_sample;
+
+		coefficients[midpoint + c] = coefficient;
+		coefficients[midpoint - c] = coefficient;
+		total += coefficient * 2.0f;
+	}
+	total -= coefficients[midpoint];
+
+	for(auto &coefficient: coefficients) {
+		coefficient /= total;
+	}
+
+	return FIRFilter<type>(
+		coefficients.begin(),
+		coefficients.end()
+	);
+}
+
+
+// MARK: - Explicit instantiations.
+
+template FIRFilter<ScalarType::Int16> KaiserBessel::filter<ScalarType::Int16>(size_t, float, float, float, float);
+template FIRFilter<ScalarType::Float> KaiserBessel::filter<ScalarType::Float>(size_t, float, float, float, float);
+template FIRFilter<ScalarType::Int16> Box::filter<ScalarType::Int16>(float, float);
+template FIRFilter<ScalarType::Float> Box::filter<ScalarType::Float>(float, float);

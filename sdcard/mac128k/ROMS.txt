@@ -1,0 +1,14 @@
+# MAC128K ROM notes (Macintosh 128K via Mini vMac -m 128K).
+#
+# The kernel boots a 64KB Macintosh 128K ROM from /roms/MAC128K
+# (checksum 0x28BA61CE or 0x28BA4E50, the two known 128K revisions).
+# Mac128K.ROM is the default; the in-menu ROM selector offers every
+# file in this pool (one per 128K revision).
+#
+# Manual provisioning: drop a 128K ROM in here. There is no compiled-in
+# fallback: without a ROM the kernel cannot boot (red screen).
+# NOTE: 512Ke/Plus/SE/Classic ROMs do NOT boot on this kernel (different
+# Mini vMac compile-time model); they need a future Plus kernel.
+#
+# Disks live on the SD card under /systems/MAC128K/disks (.dsk 400K
+# single-sided floppy images, e.g. System 1.0-3.2 startup disks).

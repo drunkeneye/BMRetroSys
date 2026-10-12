@@ -19,6 +19,15 @@
 #if defined(RASPI_DOS)
 #include "dos/dos_debug.h"
 #endif
+#if defined(RASPI_MAC68K)
+#include "mac68k/mac68k_debug.h"
+#elif defined(RASPI_MAC128K)
+#include "mac128k/mac128k_debug.h"
+#elif defined(RASPI_APPLE2)
+#include "apple2/apple2_debug.h"
+#elif defined(RASPI_BBC)
+#include "bbc/bbc_debug.h"
+#endif
 
 extern "C" {
 #include "bmc64_async_network.h"
@@ -59,6 +68,14 @@ extern "C" {
 #include "bootstat_msx.h"
 #elif defined(RASPI_A2600)
 #include "bootstat_a2600.h"
+#elif defined(RASPI_MAC68K)
+#include "bootstat_mac68k.h"
+#elif defined(RASPI_MAC128K)
+#include "bootstat_mac128k.h"
+#elif defined(RASPI_APPLE2)
+#include "bootstat_apple2.h"
+#elif defined(RASPI_BBC)
+#include "bootstat_bbc.h"
 #else
   #error Unknown RASPI_ variant
 #endif
@@ -556,6 +573,12 @@ bool ViceStdioApp::Initialize(void) {
   if (!ViceScreenApp::Initialize()) {
     return false;
   }
+#ifdef RASPI_MAC68K
+  bmx::mac68k::debug_log("core0: ViceScreenApp::Initialize done (core Init ran)");
+#endif
+#ifdef RASPI_MAC128K
+  bmx::mac128k::debug_log("core0: ViceScreenApp::Initialize done (core Init ran)");
+#endif
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: ViceStdioApp::Initialize enter");
 
@@ -566,6 +589,12 @@ bool ViceStdioApp::Initialize(void) {
                 "boot: emmc ready");
 #ifdef RASPI_DOS
   bmx::dos::debug_log("core0: emmc ready");
+#endif
+#ifdef RASPI_MAC68K
+  bmx::mac68k::debug_log("core0: emmc ready");
+#endif
+#ifdef RASPI_MAC128K
+  bmx::mac128k::debug_log("core0: emmc ready");
 #endif
 
   mSYSFileSystemMounted = f_mount(&mFileSystemSYS, "SYS:", 1) == FR_OK;
@@ -590,6 +619,16 @@ bool ViceStdioApp::Initialize(void) {
                 "boot: sd mount ready");
 #ifdef RASPI_DOS
   bmx::dos::debug_log("core0: sd mounts ready");
+#endif
+#ifdef RASPI_MAC68K
+  bmx::mac68k::debug_log("core0: sd mounts ready SYS=%d SD=%d USER=%d",
+                         (int)mSYSFileSystemMounted, (int)mSDFileSystemMounted,
+                         (int)mUserFileSystemMounted);
+#endif
+#ifdef RASPI_MAC128K
+  bmx::mac128k::debug_log("core0: sd mounts ready SYS=%d SD=%d USER=%d",
+                         (int)mSYSFileSystemMounted, (int)mSDFileSystemMounted,
+                         (int)mUserFileSystemMounted);
 #endif
 
   InitBootStat();
@@ -628,6 +667,12 @@ bool ViceStdioApp::Initialize(void) {
 #if defined(BMC64_USE_EMU_MULTICORE) && \
     !(BMX_PI4_LEGACY_DISPLAY && BMX_EMU_MULTICORE)
   bmx_set_boot_stage(19);
+#ifdef RASPI_MAC68K
+  bmx::mac68k::debug_log("core0: launching emulator on core1");
+#endif
+#ifdef RASPI_MAC128K
+  bmx::mac128k::debug_log("core0: launching emulator on core1");
+#endif
   mEmulatorCore->LaunchEmulator(mTimingOption);
   bmx_set_boot_stage(21);
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),

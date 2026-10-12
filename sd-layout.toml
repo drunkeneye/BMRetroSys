@@ -598,6 +598,41 @@ to = "roms/AMIGA/bootstat.txt"
 mode = "keep"
 
 [[both.file]]
+from = "sdcard/mac128k/ROMS.txt"
+to = "roms/MAC128K/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/mac128k/bootstat.txt"
+to = "roms/MAC128K/bootstat.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/mac68k/ROMS.txt"
+to = "roms/MAC68K/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/mac68k/bootstat.txt"
+to = "roms/MAC68K/bootstat.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/apple2/ROMS.txt"
+to = "roms/APPLE2/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/bbc/ROMS.txt"
+to = "roms/BBC/ROMS.txt"
+mode = "keep"
+
+[[both.file]]
+from = "sdcard/apple2/bootstat.txt"
+to = "roms/APPLE2/bootstat.txt"
+mode = "keep"
+
+[[both.file]]
 from = "sdcard/zxspectrum/ROMS.txt"
 to = "roms/ZXSPECTRUM/ROMS.txt"
 mode = "keep"
@@ -651,6 +686,26 @@ exclude = ["README.txt"]
 [[both.tree]]
 from = "repo/roms/amiga"
 to = "roms/AMIGA"
+mode = "keep"
+exclude = ["README.txt"]
+
+# Mac 128K ROM pool for the MAC128K machine. Everything in repo roms/mac128k/
+# is staged 1:1 to /roms/MAC128K/ on the SD card (flat, original names
+# kept). The kernel boots a user-supplied 64KB 128K ROM with no
+# compiled-in fallback list.
+[[both.tree]]
+from = "repo/roms/mac128k"
+to = "roms/MAC128K"
+mode = "keep"
+exclude = ["README.txt"]
+
+# Mac ROM pool for the MAC68K machine. Everything in repo roms/mac68k/ is
+# staged 1:1 to /roms/MAC68K/ on the SD card (flat, original names kept).
+# The kernel boots from the user-supplied /roms/MAC68K/mac_rom.bin with
+# no compiled-in fallback list.
+[[both.tree]]
+from = "repo/roms/mac68k"
+to = "roms/MAC68K"
 mode = "keep"
 exclude = ["README.txt"]
 
@@ -939,6 +994,26 @@ to = "kernel7l.img.a2600"
 mode = "kernel"
 
 [[pi3.file]]
+from = "kernels/kernel7l.img.mac128k"
+to = "kernel7l.img.mac128k"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.mac68k"
+to = "kernel7l.img.mac68k"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.apple2"
+to = "kernel7l.img.apple2"
+mode = "kernel"
+
+[[pi3.file]]
+from = "kernels/kernel7l.img.bbc"
+to = "kernel7l.img.bbc"
+mode = "kernel"
+
+[[pi3.file]]
 to = "kernel7l.img.updater"
 mode = "kernel"
 optional = true
@@ -1061,6 +1136,26 @@ to = "kernel8.img.a2600"
 mode = "kernel"
 
 [[pi4.file]]
+from = "kernels/kernel8.img.mac128k"
+to = "kernel8.img.mac128k"
+mode = "kernel"
+
+[[pi4.file]]
+from = "kernels/kernel8.img.mac68k"
+to = "kernel8.img.mac68k"
+mode = "kernel"
+
+[[pi4.file]]
+from = "kernels/kernel8.img.apple2"
+to = "kernel8.img.apple2"
+mode = "kernel"
+
+[[pi4.file]]
+from = "kernels/kernel8.img.bbc"
+to = "kernel8.img.bbc"
+mode = "kernel"
+
+[[pi4.file]]
 to = "kernel8.img.updater"
 mode = "kernel"
 optional = true
@@ -1170,6 +1265,26 @@ mode = "kernel"
 [[pi5.file]]
 from = "kernels/kernel_2712.img.a2600"
 to = "kernel_2712.img.a2600"
+mode = "kernel"
+
+[[pi5.file]]
+from = "kernels/kernel_2712.img.mac128k"
+to = "kernel_2712.img.mac128k"
+mode = "kernel"
+
+[[pi5.file]]
+from = "kernels/kernel_2712.img.mac68k"
+to = "kernel_2712.img.mac68k"
+mode = "kernel"
+
+[[pi5.file]]
+from = "kernels/kernel_2712.img.apple2"
+to = "kernel_2712.img.apple2"
+mode = "kernel"
+
+[[pi5.file]]
+from = "kernels/kernel_2712.img.bbc"
+to = "kernel_2712.img.bbc"
 mode = "kernel"
 
 [[pi5.file]]
@@ -1847,6 +1962,27 @@ to = "roms/MSX"
 mode = "keep"
 exclude = ["README.txt"]
 
+# Apple II firmware pool for the APPLE2 machine. Everything in repo
+# roms/apple2/ is staged 1:1 to /roms/APPLE2/ on the SD card (ROM.03,
+# ROM.01, APPLE2E.ROM, diskII.prom; assembled by tools/download_roms.py
+# --only=apple2; keep: user-supplied genuine ROMs with the same names are
+# never overwritten).
+[[both.tree]]
+from = "repo/roms/apple2"
+to = "roms/APPLE2"
+mode = "keep"
+exclude = ["README.txt"]
+
+# BBC firmware pool for the BBC machine. Everything in repo roms/bbc/
+# is staged 1:1 to /roms/BBC/ on the SD card
+# (keep: user-supplied genuine ROMs with the same names are never
+# overwritten).
+[[both.tree]]
+from = "repo/roms/bbc"
+to = "roms/BBC"
+mode = "keep"
+exclude = ["README.txt"]
+
 # MSX media is flat: everything (carts, tapes, zips) lives directly in
 # /systems/MSX (plus snapshots/ for save states). The browsers open at
 # the machine root and filter by type, so no per-type subfolders.
@@ -1873,6 +2009,18 @@ optional = true
 [[both.tree]]
 from = "usermedia/disks/CPC"
 to = "systems/CPC/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/APPLE2"
+to = "systems/APPLE2/disks"
+mode = "keep"
+optional = true
+
+[[both.tree]]
+from = "usermedia/disks/BBC"
+to = "systems/BBC/disks"
 mode = "keep"
 optional = true
 
@@ -2087,6 +2235,14 @@ to = "systems/CPC/disks"
 mode = "keep"
 
 [[both.directory]]
+to = "systems/APPLE2/disks"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/BBC/disks"
+mode = "keep"
+
+[[both.directory]]
 to = "systems/MSX"
 mode = "keep"
 
@@ -2100,6 +2256,22 @@ mode = "keep"
 
 [[both.directory]]
 to = "systems/A2600/snapshots"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/MAC128K/disks"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/MAC128K/snapshots"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/MAC68K/disks"
+mode = "keep"
+
+[[both.directory]]
+to = "systems/MAC68K/snapshots"
 mode = "keep"
 
 # Screenshots land here (screenshots/<kernel>/shotNN.bmp, one folder per

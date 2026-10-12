@@ -1,0 +1,117 @@
+//
+//  Track.hpp
+//  Clock Signal
+//
+//  Created by Thomas Harte on 22/09/2017.
+//  Copyright 2017 Thomas Harte. All rights reserved.
+//
+
+#pragma once
+
+#include "Storage/Storage.hpp"
+
+#include <memory> // An arbitrary choice to get visibility of std::hash.
+#include <tuple>
+
+namespace Storage::Disk {
+
+/*!
+	Contains a head position, with some degree of sub-integral precision.
+*/
+class HeadPosition {
+public:
+	/// Creates an instance decribing position @c value at a resolution of @c scale ticks per track.
+	constexpr HeadPosition(const int value, const int scale) : position_(value * (4/scale)) {}
+	constexpr explicit HeadPosition(const int value) : HeadPosition(value, 1) {}
+	constexpr HeadPosition() : HeadPosition(0) {}
+
+	/// @returns the whole number part of the position.
+	constexpr int as_int() const { return position_ >> 2; }
+	/// @returns n where n/2 is the head position.
+	constexpr int as_half() const { return position_ >> 1; }
+	/// @returns n where n/4 is the head position.
+	constexpr int as_quarter() const { return position_; }
+
+	/// @returns the head position at maximal but unspecified precision.
+	constexpr int as_largest() const { return as_quarter(); }
+
+	HeadPosition &operator +=(const HeadPosition &rhs) {
+		position_ += rhs.position_;
+		return *this;
+	}
+	constexpr auto operator <=>(const HeadPosition&) const = default;
+
+private:
+	int position_ = 0;
+};
+
+/*!
+	Models a single track on a disk as a series of events, each event being of arbitrary length
+	and resulting in either a flux transition or the sensing of an index hole.
+
+	Subclasses should implement @c get_next_event.
+*/
+class Track {
+public:
+	virtual ~Track() = default;
+
+	/*!
+		Describes the location of a track, implementing @c < and @c == (with std::hash specialised elsewhere)
+		to allow for use in both regular and unordered sets and maps.
+	*/
+	struct Address {
+		int head;
+		HeadPosition position;
+
+		constexpr auto operator <=>(const Address&) const = default;
+		constexpr Address(const int head, const HeadPosition position) noexcept : head(head), position(position) {}
+	};
+
+	/*!
+		Describes a detectable track event: either a flux transition or the passing of the index hole,
+		along with the length of time between the previous event and its occurance.
+
+		The sum of all lengths of time across an entire track should be 1; if an event is said to be
+		1/3 away then that means 1/3 of a rotation.
+	*/
+	struct Event {
+		enum Type {
+			IndexHole, FluxTransition
+		} type;
+		Time length;
+	};
+
+	/*!
+		@returns the next event that will be detected during rotation of this disk.
+	*/
+	virtual Event get_next_event() = 0;
+
+	/*!
+		Jumps to the start of the fist event that will occur after @c time_since_index_hole.
+
+		@returns the time jumped to.
+	*/
+	virtual float seek_to(float time_since_index_hole) = 0;
+
+	/*!
+		The virtual copy constructor pattern; returns a copy of the Track.
+	*/
+	virtual Track *clone() const = 0;
+};
+
+}
+
+template <>
+struct std::hash<Storage::Disk::HeadPosition> {
+	size_t operator()(const Storage::Disk::HeadPosition &position) const {
+		return size_t(position.as_largest());
+	}
+};
+
+template <>
+struct std::hash<Storage::Disk::Track::Address> {
+	size_t operator()(const Storage::Disk::Track::Address &address) const {
+		std::hash<Storage::Disk::HeadPosition> position_hasher;
+		return size_t(address.head << 16) ^ position_hasher(address.position);
+	}
+};
